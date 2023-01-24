@@ -11,6 +11,7 @@ import {DatePanelOverlay} from './date-panel'
 import './index.css'
 import {disableNavigation, setupNavigation} from './navigation'
 import {setup as setupFuzzies, disable as disableFuzzies} from './fuzzy-date'
+import {setup as setupReferenceGroups} from './linked-reference-groups'
 
 const ID = 'roam-date'
 
@@ -41,7 +42,6 @@ const cleanupBlockObservers = () => {
 export default runExtension({
     extensionId: ID,
     run: () => {
-        console.log('run extension is run')
         setupNavigation()
         setupFuzzies()
 
@@ -63,6 +63,8 @@ export default runExtension({
             })
             refElement.parentNode.insertBefore(icon, refElement)
         })
+
+        setupReferenceGroups()
     },
     unload: () => {
         disableFuzzies()
