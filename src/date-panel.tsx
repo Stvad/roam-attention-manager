@@ -1,22 +1,22 @@
-import React, {useState} from "react"
+import React, {useState} from 'react'
 
-import {Classes, Dialog} from "@blueprintjs/core"
+import {Classes, Dialog} from '@blueprintjs/core'
 
-import {createModifier, modifyDateInBlock} from "./core/date"
-import {SRSSignal, SRSSignals} from "./srs/scheduler"
-import {AnkiScheduler} from "./srs/AnkiScheduler"
-import {Block} from "roam-api-wrappers/dist/data"
-import {SM2Node} from "./srs/SM2Node"
+import {createModifier, modifyDateInBlock} from './core/date'
+import {SRSSignal, SRSSignals} from './srs/scheduler'
+import {Block} from 'roam-api-wrappers/dist/data'
+import {SM2Node} from './srs/SM2Node'
 
-import "./date-panel.css"
-import {delay} from "./core/async"
+import './date-panel.css'
+import {delay} from './core/async'
 import {createOverlayRender} from 'roamjs-components/util'
+import {rescheduleBlock} from './srs'
 
 export type DatePanelProps = {
     blockUid: string
 }
 
-interface MoveDateButtonParams {
+export interface MoveDateButtonProps {
     shift: number
     label: string
 }
@@ -37,7 +37,7 @@ export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePa
         setDate(getFirstDate(blockUid))
     }
 
-    const MoveDateButton = ({shift, label}: MoveDateButtonParams) =>
+    const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
         <button className={"date-button"}
                 onClick={async () => {
                     modifyDateInBlock(blockUid, createModifier(shift))
@@ -87,10 +87,3 @@ export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePa
 }
 
 export const DatePanelOverlay = createOverlayRender<DatePanelProps>("date-overlay", DatePanel)
-
-
-export function rescheduleBlock(blockUid: string, signal: SRSSignal) {
-    const scheduler = new AnkiScheduler()
-    const block = Block.fromUid(blockUid)
-    block.text = scheduler.schedule(new SM2Node(block.text), signal).text
-}
