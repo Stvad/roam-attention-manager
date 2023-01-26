@@ -1,6 +1,10 @@
 import React, {useEffect, useState} from 'react'
 import {RoamEntity} from 'roam-api-wrappers/dist/data'
-import {defaultExclusions, groupByMostCommonReferences} from 'roam-api-wrappers/dist/data/collection'
+import {
+    defaultExclusions,
+    groupByMostCommonReferences,
+    matchesFilter,
+} from 'roam-api-wrappers/dist/data/collection'
 import {Block} from '../components/block'
 import {Button} from '@blueprintjs/core'
 import {SRSSignal, SRSSignals} from '../srs/scheduler'
@@ -32,7 +36,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
 
     return <div className="reference-group" key={uid}>
         <div className="reference-group-header">
-            <div>{RoamEntity.fromUid(uid).text} ({entities.length})</div>
+            <div>{RoamEntity.fromUid(uid)?.text} ({entities.length})</div>
             <div className={"reference-group-controls"}>
 
 
@@ -65,18 +69,24 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
 
     function updateRenderGroups(refresh: boolean = false) {
         const entity = RoamEntity.fromUid(entityUid)
-        const backlincks = entity?.backlinks
+        if(!entity) return
+
+        const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
         // todo this is ugly?
-        if (backlincks.length > 150 && !refresh) return
+        if (backlinks.length > 150 && !refresh) return
 
         // todo filter before grouping
-        const groups = groupByMostCommonReferences(backlincks, [...defaultExclusions, new RegExp(`^${entity.text}$`)])
+        const groups = groupByMostCommonReferences(backlinks, [...defaultExclusions, new RegExp(`^${entity.text}$`)])
         // expose possible/hidden groups to user in ux and allow them to select which ones to render
         console.log({groups})
-        setRenderGroups(Array.from(groups.entries()).filter(([_, entries]) => entries.length >= smallestGroupSize))
+        setRenderGroups(Array.from(groups.entries())
+            .filter(([_, entries]) => entries.length >= smallestGroupSize))
     }
 
     useEffect(() => {
+        // const tooManyBacklinks = (RoamEntity.fromUid(entityUid)?.backlinks.length ?? 0) > 150
+        // if (tooManyBacklinks)  return
+
         updateRenderGroups()
     }, [entityUid, smallestGroupSize])
     // todo loading indicator
