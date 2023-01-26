@@ -7,7 +7,7 @@
     "build": "roamjs-scripts build",
     "dev": "roamjs-scripts dev",
     "dev:depot": "roamjs-scripts dev --depot",
-    "deploy": "netlify deploy --prod -s roam-date.roam.garden -d build",
+    "deploy": "netlify deploy --prod -s attention-manager.netlify.app -d build",
     "prebuild:roam": "yarn install",
     "build:roam": "roamjs-scripts build --depot"
   },
