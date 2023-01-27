@@ -6,7 +6,7 @@ import {
     matchesFilter,
 } from 'roam-api-wrappers/dist/data/collection'
 import {Block} from '../components/block'
-import {Button} from '@blueprintjs/core'
+import {Button, Collapse} from '@blueprintjs/core'
 import {SRSSignal, SRSSignals} from '../srs/scheduler'
 import {rescheduleBlock} from '../srs'
 import {createModifier, modifyDateInBlock} from '../core/date'
@@ -24,9 +24,10 @@ interface ReferenceGroupProps {
 
 
 function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
+    const [isOpen, setIsOpen] = useState(true)
     const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
-        <Button className={"date-button"}
-                onClick={ () => {
+        <Button className={'date-button'}
+                onClick={() => {
                     entities.forEach(
                         ent => modifyDateInBlock(ent.uid, createModifier(shift)))
                 }}
@@ -34,18 +35,33 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
             {label}
         </Button>
 
-    return <div className="reference-group" key={uid}>
-        <div className="reference-group-header">
+    return <div
+        className="reference-group"
+        css={{
+            marginTop: '1em',
+        }}
+    >
+        <div
+            className="reference-group-header"
+            css={{
+                display: 'flex',
+            }}
+        >
+            <Button
+                icon={isOpen? 'chevron-down' : 'chevron-right'}
+                onClick={() => setIsOpen(!isOpen)}
+            />
             <div>{RoamEntity.fromUid(uid)?.text} ({entities.length})</div>
-            <div className={"reference-group-controls"}>
+        </div>
 
-
+        <Collapse isOpen={isOpen} keepChildrenMounted={true} transitionDuration={0}>
+            <div className={'reference-group-controls'}>
                 <div className="srs-buttons date-buttons">
-                    <MoveDateButton shift={1} label={"+1d"}/>
-                    <MoveDateButton shift={-1} label={"-1d"}/>
+                    <MoveDateButton shift={1} label={'+1d'}/>
+                    <MoveDateButton shift={-1} label={'-1d'}/>
 
                     {SRSSignals.map(sig => <Button
-                        className={"srs-button date-button"}
+                        className={'srs-button date-button'}
                         onClick={async () => {
                             // todo double check if it's still referencing the main page, ignore if not
                             entities.forEach(ent => rescheduleBlock(ent.uid, sig))
@@ -55,10 +71,14 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                     </Button>)}
                 </div>
             </div>
-        </div>
-        <div className="reference-group-entities">
-            {entities.map(entity => <Block uid={entity.uid} key={entity.uid}/>)}
-        </div>
+
+            <div className="reference-group-entities">
+                {entities.map(entity =>
+                    <div className={'rm-reference-item'}>
+                        <Block uid={entity.uid} key={entity.uid}/>
+                    </div>)}
+            </div>
+        </Collapse>
     </div>
 }
 
@@ -69,9 +89,10 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
 
     function updateRenderGroups(refresh: boolean = false) {
         const entity = RoamEntity.fromUid(entityUid)
-        if(!entity) return
+        if (!entity) return
 
         const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
+        console.log({backlinks})
         // todo this is ugly?
         if (backlinks.length > 150 && !refresh) return
 
@@ -91,8 +112,21 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
     }, [entityUid, smallestGroupSize])
     // todo loading indicator
     // todo if no groups are matching the size limit - show special message
-    return <div className="reference-group-container">
-        <div className="reference-groups-header">
+    return <div
+        className="reference-group-container"
+        css={{
+            [`[data-link-uid="${entityUid}"]`]: {
+                backgroundColor: '#bce5d385',
+                borderRadius: '4px',
+            },
+        }}
+    >
+        <div
+            className="reference-groups-header"
+            css={{
+                display: 'flex',
+            }}
+        >
             <div>References grouped by most common pages</div>
             <Button icon={'refresh'} onClick={() => updateRenderGroups(true)}/>
         </div>
@@ -102,5 +136,5 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
 }
 
 ReferenceGroups.defaultProps = {
-    smallestGroupSize: 3,
+    smallestGroupSize: 2,
 }

@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@blueprintjs/popover2": "^0.12.7",
+    "@emotion/react": "^11.10.5",
     "chrono-node": "^2.4.1",
     "date-fns": "^2.29.2",
     "hotkeys-js": "^3.9.5",

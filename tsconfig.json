@@ -2,7 +2,9 @@
   "extends": "./node_modules/roamjs-scripts/dist/default.tsconfig",
   "compilerOptions": {
     "noImplicitAny": true,
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@emotion/react"
   },
   "include": [
     "src"
