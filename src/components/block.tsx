@@ -8,6 +8,8 @@ interface BlockProps {
 export const Block = (props: BlockProps) => {
     const ref = useRef<HTMLDivElement>(null)
     useEffect(() => {
+        if (!ref.current) return
+
         window.roamAlphaAPI.ui.components.renderBlock({
             el: ref.current,
             uid: props.uid,

@@ -12,6 +12,7 @@ export function modifyDateInBlock(blockUid: string, modifier: (input: number) =>
     const block = Block.fromUid(blockUid)
 
     const datesInContent = block.text.match(RoamDate.referenceRegex)
+    if (!datesInContent) return
 
     block.text = block.text.replace(
         datesInContent[0],

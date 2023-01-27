@@ -11,9 +11,7 @@ export const setup = async () => {
 
 export const teardown = () => {
     const container = document.querySelector(`.${containerClass}`)
-    if (container) {
-        container.parentNode.removeChild(container)
-    }
+    container?.parentNode?.removeChild(container)
 }
 const renderGroupsForCurrentPage = async () => {
     const entityUid = await window.roamAlphaAPI.ui.mainWindow.getOpenPageOrBlockUid()
@@ -28,7 +26,7 @@ function createContainer() {
     const container = document.createElement('div')
     container.className = containerClass + ', rm-mentions'
     const containerSelector = '.rm-reference-main'
-    const referenceMain = document.querySelector(containerSelector).firstElementChild
+    const referenceMain = document.querySelector(containerSelector)?.firstElementChild
     if (referenceMain) {
         referenceMain.prepend(container)
     }

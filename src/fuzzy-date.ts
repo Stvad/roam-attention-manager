@@ -25,7 +25,7 @@ export async function replaceFuzzyDate(guard: string) {
     const editElement = getActiveEditElement()
     if (!editElement) return
 
-    const node = new SM2Node(editElement.value, getSelectionInFocusedBlock())
+    const node = new SM2Node(editElement.value, getSelectionInFocusedBlock() as NodeSelection)
 
     const match = node.text.match(dateContainerExpr)
     if (!match) return node

@@ -22,7 +22,7 @@ const hasDateReferenced = (element: HTMLDivElement) =>
 const iconClass = 'roam-date-icon'
 
 const iconAlreadyExists = (refElement: HTMLElement) =>
-    refElement.parentElement.querySelector(`.${iconClass}`)
+    refElement.parentElement?.querySelector(`.${iconClass}`)
 
 function findDateRef(b: HTMLDivElement) {
     const refs = b.querySelectorAll('.rm-page-ref')
@@ -61,7 +61,7 @@ export default runExtension({
                 e.stopPropagation()
                 DatePanelOverlay({blockUid})
             })
-            refElement.parentNode.insertBefore(icon, refElement)
+            refElement.parentNode?.insertBefore(icon, refElement)
         })
 
         setupReferenceGroups()

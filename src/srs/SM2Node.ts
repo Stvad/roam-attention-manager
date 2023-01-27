@@ -88,12 +88,14 @@ export class NodeSelection {
 
 export const saveToCurrentBlock = async (node: RoamNode) => {
     const block = Block.current
+    if(!block) return
+
     block.text = node.text
 
     return window.roamAlphaAPI.ui.setBlockFocusAndSelection({
         location: {
             'block-uid': block.uid,
-            'window-id': Roam.focusedBlockInfo()['window-id']
+            'window-id': Roam.focusedBlockInfo()?.['window-id']!
         },
         selection: {
             start: node.selection.start,
