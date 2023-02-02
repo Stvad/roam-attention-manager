@@ -22,9 +22,18 @@ interface ReferenceGroupProps {
     entities: RoamEntity[]
 }
 
+export const useTogglButton = () => {
+    const [isOpen, setIsOpen] = useState(true)
+    const ToggleButton = () =>
+        <Button
+            icon={isOpen ? 'chevron-down' : 'chevron-right'}
+            onClick={() => setIsOpen(!isOpen)}
+        />
+    return {isOpen, ToggleButton}
+}
 
 function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
-    const [isOpen, setIsOpen] = useState(true)
+    const {isOpen, ToggleButton} = useTogglButton()
     const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
         <Button className={'date-button'}
                 onClick={() => {
@@ -47,10 +56,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                 display: 'flex',
             }}
         >
-            <Button
-                icon={isOpen? 'chevron-down' : 'chevron-right'}
-                onClick={() => setIsOpen(!isOpen)}
-            />
+            <ToggleButton/>
             <div>{RoamEntity.fromUid(uid)?.text} ({entities.length})</div>
         </div>
 
@@ -83,16 +89,16 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
 }
 
 export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsProps) {
+    const {isOpen, ToggleButton} = useTogglButton()
     const [renderGroups, setRenderGroups] = useState<[string, RoamEntity[]][]>([])
-    // todo groups it collapsible and remember the state in local storage
-    // todo refresh button
+    // todo remember collapse state in local storage
 
+    // todo also have a shortcut for refresh
     function updateRenderGroups(refresh: boolean = false) {
         const entity = RoamEntity.fromUid(entityUid)
         if (!entity) return
 
         const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
-        console.log({backlinks})
         // todo this is ugly?
         if (backlinks.length > 150 && !refresh) return
 
@@ -127,14 +133,25 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
                 display: 'flex',
             }}
         >
+            <ToggleButton/>
             <div>References grouped by most common pages</div>
             <Button icon={'refresh'} onClick={() => updateRenderGroups(true)}/>
         </div>
-        {renderGroups.map(([uid, entities]) =>
-            <ReferenceGroup uid={uid} entities={entities} key={uid}/>)}
+
+        <Collapse
+            isOpen={isOpen}
+            keepChildrenMounted={true}
+            transitionDuration={0}
+            css={{
+                marginLeft: '0.5em',
+            }}
+        >
+            {renderGroups.map(([uid, entities]) =>
+                <ReferenceGroup uid={uid} entities={entities} key={uid}/>)}
+        </Collapse>
     </div>
 }
 
 ReferenceGroups.defaultProps = {
-    smallestGroupSize: 2,
+    smallestGroupSize: 1,
 }
