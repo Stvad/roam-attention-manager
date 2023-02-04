@@ -102,7 +102,6 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
         // todo this is ugly?
         if (backlinks.length > 150 && !refresh) return
 
-        // todo filter before grouping
         const groups = groupByMostCommonReferences(backlinks, [...defaultExclusions, new RegExp(`^${entity.text}$`)])
         // expose possible/hidden groups to user in ux and allow them to select which ones to render
         console.log({groups})
