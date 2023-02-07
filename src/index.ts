@@ -12,6 +12,8 @@ import './index.css'
 import {disableNavigation, setupNavigation} from './navigation'
 import {setup as setupFuzzies, disable as disableFuzzies} from './fuzzy-date'
 import {setup as setupReferenceGroups} from './linked-reference-groups'
+import {setup as setupHighlightPriority} from './highlight-priority'
+import {createConfigPage} from './config'
 
 const ID = 'roam-date'
 
@@ -41,7 +43,8 @@ const cleanupBlockObservers = () => {
 
 export default runExtension({
     extensionId: ID,
-    run: () => {
+    run: async () => {
+        await createConfigPage()
         setupNavigation()
         setupFuzzies()
 
@@ -64,6 +67,7 @@ export default runExtension({
             refElement.parentNode?.insertBefore(icon, refElement)
         })
 
+        await setupHighlightPriority()
         setupReferenceGroups()
     },
     unload: () => {
