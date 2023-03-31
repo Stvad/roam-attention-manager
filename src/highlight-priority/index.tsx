@@ -27,8 +27,11 @@ const renderPriorityItemForDailyPages = async () => {
     console.log(`Setting up focus items for ${entityUid}`)
     if (!entityUid) return
     const entity = RoamEntity.fromUid(entityUid)
-    console.log(`entity will render: `, !entity || !(entity instanceof Page) || !RoamDate.onlyPageTitleRegex.test(entity.text))
-    if (!entity || !(entity instanceof Page) || !RoamDate.onlyPageTitleRegex.test(entity.text)) return
+    const shouldSkipRendering = !entity || !(entity instanceof Page) || !RoamDate.onlyPageTitleRegex.test(entity.text)
+    if (shouldSkipRendering) {
+        console.log('Skipping rendering of focus item for non-daily page', entityUid, entity?.text)
+        return
+    }
 
     const blockOfInterest = await getFocusBlockUid(entity)
 

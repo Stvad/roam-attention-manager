@@ -11,6 +11,7 @@ import {SRSSignal, SRSSignals} from '../srs/scheduler'
 import {rescheduleBlock} from '../srs'
 import {createModifier, modifyDateInBlock} from '../core/date'
 import {MoveDateButtonProps} from '../date-panel'
+import {delay} from '../core/async'
 
 interface ReferenceGroupsProps {
     entityUid: string
@@ -66,7 +67,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                     <MoveDateButton shift={1} label={'+1d'}/>
                     <MoveDateButton shift={-1} label={'-1d'}/>
 
-                    {SRSSignals.map(sig => <Button
+                    {SRSSignals.slice(1).map(sig => <Button
                         className={'srs-button date-button'}
                         onClick={async () => {
                             // todo double check if it's still referencing the main page, ignore if not
@@ -96,11 +97,18 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
     // todo also have a shortcut for refresh
     function updateRenderGroups(refresh: boolean = false) {
         const entity = RoamEntity.fromUid(entityUid)
-        if (!entity) return
+        if (!entity) {
+            console.error(`${entityUid} entity not found`)
+            return
+        }
 
         const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
         // todo this is ugly?
-        if (backlinks.length > 150 && !refresh) return
+        if (backlinks.length > 150 && !refresh) {
+            console.warn(`Too many backlinks (${backlinks.length}) for ${entityUid} - skipping initial render.
+             Click refresh to render anyway.`)
+            return
+        }
 
         const groups = groupByMostCommonReferences(backlinks, [...defaultExclusions, new RegExp(`^${entity.text}$`)])
         // expose possible/hidden groups to user in ux and allow them to select which ones to render
@@ -109,11 +117,25 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
             .filter(([_, entries]) => entries.length >= smallestGroupSize))
     }
 
-    useEffect(() => {
-        // const tooManyBacklinks = (RoamEntity.fromUid(entityUid)?.backlinks.length ?? 0) > 150
-        // if (tooManyBacklinks)  return
+    const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
+        console.log(event)
+        if (event.altKey && event.metaKey && event.keyCode === 82) {
+            console.log('refreshing')
 
-        updateRenderGroups()
+            updateRenderGroups(true)
+        }
+    }
+
+    useEffect(() => {
+        (async () => {
+            await delay(0)
+            updateRenderGroups()
+            document.addEventListener('keydown', updateReferenceGroupsShortcutHandler)
+        })()
+
+        return () => {
+            document.removeEventListener('keydown', updateReferenceGroupsShortcutHandler)
+        }
     }, [entityUid, smallestGroupSize])
     // todo loading indicator
     // todo if no groups are matching the size limit - show special message
