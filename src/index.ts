@@ -15,7 +15,7 @@ import {setup as setupReferenceGroups} from './linked-reference-groups'
 import {setup as setupHighlightPriority} from './highlight-priority'
 import {createConfigPage} from './config'
 
-const ID = 'roam-date'
+const ID = 'attention-manager'
 
 //todo this matches things that have a sub-node with date
 const hasDateReferenced = (element: HTMLDivElement) =>

@@ -1,6 +1,5 @@
-import {RoamDate} from "roam-api-wrappers/dist/date"
-import {Block, Roam} from "roam-api-wrappers/dist/data"
-import {delay} from '../core/async'
+import {RoamDate} from 'roam-api-wrappers/dist/date'
+import {Block, Roam} from 'roam-api-wrappers/dist/data'
 
 export class RoamNode {
     constructor(readonly text: string, readonly selection: NodeSelection = new NodeSelection()) {}
@@ -10,13 +9,20 @@ export class RoamNode {
     }
 
     withInlineProperty(name: string, value: string) {
-        const currentValue = this.getInlineProperty(name)
-        const property = RoamNode.createInlineProperty(name, value)
-        const newText = currentValue
-            ? this.text.replace(RoamNode.getInlinePropertyMatcher(name), property)
-            : this.text + ' ' + property
+        const updateProperty = (node: RoamNode) => {
+            const currentValue = node.getInlineProperty(name)
+            const property = RoamNode.createInlineProperty(name, value)
+            return currentValue
+                ? node.text.replace(RoamNode.getInlinePropertyMatcher(name), property)
+                : node.text + ' ' + property
+        }
+
+        return this.withTextTransformation(updateProperty)
+    }
+
+    withTextTransformation(update: (node: RoamNode) => string) {
         // @ts-ignore
-        return new this.constructor(newText)
+        return new this.constructor(update(this), this.selection)
     }
 
     static createInlineProperty(name: string, value: string) {

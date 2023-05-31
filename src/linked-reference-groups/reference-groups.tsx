@@ -118,10 +118,7 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
     }
 
     const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
-        console.log(event)
         if (event.altKey && event.metaKey && event.keyCode === 82) {
-            console.log('refreshing')
-
             updateRenderGroups(true)
         }
     }

@@ -1,7 +1,7 @@
-import {SM2Node} from './SM2Node'
+import {RoamNode, SM2Node} from './SM2Node'
 import {Scheduler, SRSSignal} from './scheduler'
 import {randomFromInterval} from '../core/random'
-import {addDays} from '../core/date';
+import {addDays} from '../core/date'
 
 /**
  * Again (1)
@@ -40,12 +40,10 @@ export class AnkiScheduler implements Scheduler {
         const newParams = this.getNewParameters(node, signal)
 
         const currentDate = new Date()
-        return (
-            node
-                .withInterval(newParams.interval)
-                .withFactor(newParams.factor)
-                .withDate(addDays(currentDate, Math.ceil(newParams.interval)))
-        )
+        return node
+            .withInterval(newParams.interval)
+            .withFactor(newParams.factor)
+            .withDate(addDays(currentDate, Math.ceil(newParams.interval)))
     }
 
     getNewParameters(node: SM2Node, signal: SRSSignal) {
@@ -87,8 +85,15 @@ export class AnkiScheduler implements Scheduler {
     private static enforceLimits(params: SM2Params) {
         return new SM2Params(
             Math.min(params.interval, AnkiScheduler.maxInterval),
-            Math.max(params.factor, AnkiScheduler.minFactor)
+            Math.max(params.factor, AnkiScheduler.minFactor),
         )
+    }
+}
+
+export class AnkiAttentionScheduler extends AnkiScheduler {
+    override schedule(node: SM2Node, signal: SRSSignal): SM2Node {
+        return super.schedule(node, signal)
+            .withTextTransformation((node: RoamNode) => node.text + ' *')
     }
 }
 
