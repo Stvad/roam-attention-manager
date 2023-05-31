@@ -13,6 +13,7 @@ import {disableNavigation, setupNavigation} from './navigation'
 import {setup as setupFuzzies, disable as disableFuzzies} from './fuzzy-date'
 import {setup as setupReferenceGroups} from './linked-reference-groups'
 import {setup as setupHighlightPriority} from './highlight-priority'
+import {setup as setupSRS} from './srs'
 import {createConfigPage} from './config'
 
 const ID = 'attention-manager'
@@ -47,6 +48,7 @@ export default runExtension({
         await createConfigPage()
         setupNavigation()
         setupFuzzies()
+        setupSRS()
 
         //todo do the thing for a specific date object in a block
         observersToCleanup = createBlockObserver((b: HTMLDivElement) => {

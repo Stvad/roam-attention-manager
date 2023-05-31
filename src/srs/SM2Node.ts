@@ -2,7 +2,8 @@ import {RoamDate} from 'roam-api-wrappers/dist/date'
 import {Block, Roam} from 'roam-api-wrappers/dist/data'
 
 export class RoamNode {
-    constructor(readonly text: string, readonly selection: NodeSelection = new NodeSelection()) {}
+    constructor(readonly text: string, readonly selection: NodeSelection = new NodeSelection()) {
+    }
 
     getInlineProperty(name: string) {
         return RoamNode.getInlinePropertyMatcher(name).exec(this.text)?.[1]
@@ -73,39 +74,39 @@ export class SM2Node extends RoamNode {
         return this.listDatePages().map(ref => RoamDate.parseFromReference(ref))
     }
 
-    /** If has 1 date - replace it, if more then 1 date - append it */
+    /** If has 1 date - replace it, if more than 1 date - append it */
     withDate(date: Date) {
-        const currentDates = this.listDatePages()
-        console.log(currentDates)
-        const newDate = RoamDate.toDatePage(date)
-        console.log(newDate)
-        const newText =
-            currentDates.length === 1 ? this.text.replace(currentDates[0], newDate) : this.text + ' ' + newDate
+        const update = (node: SM2Node) => {
+            const currentDates = node.listDatePages()
+            console.log(currentDates)
+            const newDate = RoamDate.toDatePage(date)
+            console.log(newDate)
+            return currentDates.length === 1 ? node.text.replace(currentDates[0], newDate) : node.text + ' ' + newDate
+        }
 
-        // @ts-ignore
-        return new this.constructor(newText)
+        return this.withTextTransformation(update)
     }
-
 }
 
 export class NodeSelection {
-    constructor(readonly start: number = 0, readonly end: number = 0) {}
+    constructor(readonly start: number = 0, readonly end: number = 0) {
+    }
 }
 
 export const saveToCurrentBlock = async (node: RoamNode) => {
     const block = Block.current
-    if(!block) return
+    if (!block) return
 
     block.text = node.text
 
     return window.roamAlphaAPI.ui.setBlockFocusAndSelection({
         location: {
             'block-uid': block.uid,
-            'window-id': Roam.focusedBlockInfo()?.['window-id']!
+            'window-id': Roam.focusedBlockInfo()?.['window-id']!,
         },
         selection: {
             start: node.selection.start,
             end: node.selection.end,
-        }
+        },
     })
 }
