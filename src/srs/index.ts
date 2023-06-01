@@ -2,7 +2,7 @@ import {SRSSignal, SRSSignals} from './scheduler'
 import {AnkiAttentionScheduler, AnkiScheduler} from './AnkiScheduler'
 import {Block} from 'roam-api-wrappers/dist/data'
 import {SM2Node} from './SM2Node'
-import hotkeys from 'hotkeys-js'
+import {setupFeatureShortcuts} from '../core/config'
 
 export function rescheduleBlock(blockUid: string, signal: SRSSignal) {
     // todo make this configurable (knowledge vs attention)
@@ -18,7 +18,7 @@ export const config = {
         type: 'shortcut',
         id: `srs_${SRSSignal[it]}`,
         label: `SRS: ${SRSSignal[it]}`,
-        initValue: `ctrl+shift+${it}`,
+        initValue: `ctrl+shift+${it},ctrl+shift+alt+command+${it},`,
         onPress: () => rescheduleCurrentNote(it),
     })),
 }
@@ -31,9 +31,5 @@ export function rescheduleCurrentNote(signal: SRSSignal) {
 }
 
 export const setup = () => {
-    hotkeys.filter = function (event) {
-        return true
-    }
-
-    config.settings.forEach(it => hotkeys(it.initValue, it.onPress))
+    setupFeatureShortcuts(config)
 }
