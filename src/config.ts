@@ -1,4 +1,4 @@
-import {RoamEntity, Page} from 'roam-api-wrappers/dist/data'
+import {Page} from 'roam-api-wrappers/dist/data'
 import {RoamStorage} from 'roam-api-wrappers/dist/storage'
 
 

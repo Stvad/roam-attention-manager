@@ -16,6 +16,7 @@ import {setup as setupHighlightPriority} from './highlight-priority'
 import {setup as setupSRS} from './srs'
 import {setup as setupIncDec} from './inc-dec-value'
 import {createConfigPage} from './config'
+import {panelConfig} from './linked-reference-groups/config'
 
 const ID = 'attention-manager'
 
@@ -45,7 +46,8 @@ const cleanupBlockObservers = () => {
 
 export default runExtension({
     extensionId: ID,
-    run: async () => {
+    run: async ({extensionAPI}) => {
+        extensionAPI.settings.panel.create(panelConfig(extensionAPI))
         await createConfigPage()
         setupNavigation()
         setupFuzzies()
@@ -72,7 +74,7 @@ export default runExtension({
         })
 
         void setupHighlightPriority()
-        setupReferenceGroups()
+        setupReferenceGroups(extensionAPI)
     },
     unload: () => {
         disableFuzzies()

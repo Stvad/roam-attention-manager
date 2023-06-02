@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react'
 import {RoamEntity} from 'roam-api-wrappers/dist/data'
 import {
-    defaultExclusions,
+    defaultExclusions, defaultLowPriority,
     groupByMostCommonReferences,
     matchesFilter,
 } from 'roam-api-wrappers/dist/data/collection'
@@ -12,11 +12,6 @@ import {rescheduleBlock} from '../srs'
 import {createModifier, modifyDateInBlock} from '../core/date'
 import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
-
-interface ReferenceGroupsProps {
-    entityUid: string
-    smallestGroupSize: number
-}
 
 interface ReferenceGroupProps {
     uid: string
@@ -89,7 +84,13 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
     </div>
 }
 
-export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsProps) {
+interface ReferenceGroupsProps {
+    entityUid: string
+    smallestGroupSize: number
+    highPriorityPages: RegExp[]
+}
+
+export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages}: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
     const [renderGroups, setRenderGroups] = useState<[string, RoamEntity[]][]>([])
     // todo remember collapse state in local storage
@@ -110,7 +111,14 @@ export function ReferenceGroups({entityUid, smallestGroupSize}: ReferenceGroupsP
             return
         }
 
-        const groups = groupByMostCommonReferences(backlinks, [...defaultExclusions, new RegExp(`^${entity.text}$`)])
+        const groups = groupByMostCommonReferences(
+            backlinks,
+            [...defaultExclusions, new RegExp(`^${entity.text}$`)],
+            {
+                low: [...defaultExclusions, ...defaultLowPriority],
+                high: highPriorityPages,
+            },
+        )
         // expose possible/hidden groups to user in ux and allow them to select which ones to render
         console.log({groups})
         setRenderGroups(Array.from(groups.entries())

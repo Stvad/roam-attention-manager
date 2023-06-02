@@ -1,17 +1,19 @@
 import * as ReactDOM from 'react-dom'
 import {ReferenceGroups} from './reference-groups'
+import {highPriorityPages} from './config'
+import {OnloadArgs} from 'roamjs-components/types'
 
 const containerClass = 'rm-reference-group-container'
 
 const commandLabel = 'Trigger Reference Groups'
 
-export const setup = async () => {
+export const setup = async (extensionAPI: OnloadArgs['extensionAPI']) => {
 
-    void renderGroupsForCurrentPage()
-    window.addEventListener('hashchange', renderGroupsForCurrentPage)
+    void renderGroupsForCurrentPage(extensionAPI)
+    window.addEventListener('hashchange', () => renderGroupsForCurrentPage(extensionAPI))
     window.roamAlphaAPI.ui.commandPalette.addCommand({
         label: commandLabel,
-        callback: renderGroupsForCurrentPage,
+        callback: () => renderGroupsForCurrentPage(extensionAPI),
     })
 }
 
@@ -21,7 +23,7 @@ export const teardown = () => {
 
     window.roamAlphaAPI.ui.commandPalette.removeCommand({label: commandLabel})
 }
-const renderGroupsForCurrentPage = async () => {
+const renderGroupsForCurrentPage = async (extensionAPI: OnloadArgs['extensionAPI']) => {
     const entityUid = await window.roamAlphaAPI.ui.mainWindow.getOpenPageOrBlockUid()
     console.log(`Setting up reference groups for ${entityUid}`)
     if (!entityUid) return
@@ -32,7 +34,7 @@ const renderGroupsForCurrentPage = async () => {
             marginTop: '1em',
         }}
     >
-        <ReferenceGroups entityUid={entityUid}/>
+        <ReferenceGroups entityUid={entityUid} highPriorityPages={highPriorityPages(extensionAPI)}/>
         <hr/>
     </div>, container)
 }
