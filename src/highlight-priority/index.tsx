@@ -19,7 +19,9 @@ export const teardown = () => {
 }
 
 async function getFocusBlockUid(entity: Page) {
-    return config.get('focusBlockUid')
+    const value = await config.get('focusBlockUid')
+    // strip parents if present
+    return value?.replace(/^\(\(/, '').replace(/\)\)$/, '')
 }
 
 const renderPriorityItemForDailyPages = async () => {
