@@ -12,6 +12,7 @@ import {rescheduleBlock} from '../srs'
 import {createModifier, modifyDateInBlock} from '../core/date'
 import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
+import {randomFromInterval} from '../core/random'
 
 interface ReferenceGroupProps {
     uid: string
@@ -27,6 +28,20 @@ export const useTogglButton = () => {
         />
     return {isOpen, ToggleButton}
 }
+
+const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
+    <Button className={'date-button'}
+            title={'Spread items uniformly across the specified number of days'}
+            onClick={() => {
+                const daysStr = prompt('Choose the number of days to spread items through', '7')
+                if (!daysStr) return
+                const days = parseInt(daysStr)
+                if (isNaN(days)) return
+
+                entities.forEach(
+                    ent => modifyDateInBlock(ent.uid, createModifier(randomFromInterval(1, days))))
+            }}
+    >🎲</Button>
 
 function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()
@@ -71,6 +86,8 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                     >
                         {SRSSignal[sig]}
                     </Button>)}
+
+                    <SpreadButton entities={entities}/>
                 </div>
             </div>
 
