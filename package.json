@@ -13,6 +13,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@types/arrive": "^2.4.1",
     "@types/react": "^17.0.31",
     "@types/react-dom": "^17.0.10",
     "@types/react-tag-autocomplete": "^6.3.0",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@blueprintjs/popover2": "^0.12.7",
     "@emotion/react": "^11.10.5",
+    "arrive": "^2.4.1",
     "chrono-node": "^2.4.1",
     "date-fns": "^2.29.2",
     "hotkeys-js": "^3.10.2",
