@@ -30,7 +30,7 @@
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
     "react-tag-autocomplete": "^6.3.0",
-    "roam-api-wrappers": "^0.1.0",
+    "roam-api-wrappers": "^0.2.1",
     "roamjs-components": "^0.72.9"
   }
 }
