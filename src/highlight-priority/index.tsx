@@ -1,16 +1,22 @@
 import * as ReactDOM from 'react-dom'
-import {RoamEntity, Page} from 'roam-api-wrappers/dist/data'
-import {RoamStorage} from 'roam-api-wrappers/dist/storage'
-import {RoamDate} from 'roam-api-wrappers/dist/date'
+import {Page, RoamEntity} from 'roam-api-wrappers/dist/data'
 import {Block} from '../components/block'
 import {config} from '../config'
+import 'arrive'
+
 
 const containerClass = 'priority-item-container'
 
+// todo unify with other config
 export const setup = async () => {
-    void renderPriorityItemForDailyPages()
+    document.arrive('.rm-title-display', {existing: true}, async title => {
+        const container = document.createElement('div')
+        container.className = containerClass + ', rm-mentions'
 
-    window.addEventListener('hashchange', renderPriorityItemForDailyPages)
+        title?.after(container)
+
+        void renderPriorityItemForDailyPages(container)
+    })
 }
 
 export const teardown = () => {
@@ -24,20 +30,18 @@ async function getFocusBlockUid(entity: Page) {
     return value?.replace(/^\(\(/, '').replace(/\)\)$/, '')
 }
 
-const renderPriorityItemForDailyPages = async () => {
+const renderPriorityItemForDailyPages = async (container: HTMLElement) => {
     const entityUid = await window.roamAlphaAPI.ui.mainWindow.getOpenPageOrBlockUid()
     console.log(`Setting up focus items for ${entityUid}`)
     if (!entityUid) return
     const entity = RoamEntity.fromUid(entityUid)
-    const shouldSkipRendering = !entity || !(entity instanceof Page) || !RoamDate.onlyPageTitleRegex.test(entity.text)
+    const shouldSkipRendering = !entity || !(entity instanceof Page) //|| !RoamDate.onlyPageTitleRegex.test(entity.text)
     if (shouldSkipRendering) {
         console.log('Skipping rendering of focus item for non-daily page', entityUid, entity?.text)
         return
     }
 
     const blockOfInterest = await getFocusBlockUid(entity)
-
-    const container = await createContainer()
 
     ReactDOM.render(<div
         css={{
@@ -52,14 +56,4 @@ const renderPriorityItemForDailyPages = async () => {
     >
         {blockOfInterest && <Block uid={blockOfInterest}/>}
     </div>, container)
-}
-
-async function createContainer() {
-    const container = document.createElement('div')
-    container.className = containerClass + ', rm-mentions'
-    const controlsSelector = '.rm-title-display'
-    const controls = document.querySelector(controlsSelector)
-    controls?.after(container)
-
-    return container
 }
