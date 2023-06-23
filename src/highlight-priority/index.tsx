@@ -9,7 +9,7 @@ const containerClass = 'priority-item-container'
 
 // todo unify with other config
 export const setup = async () => {
-    document.arrive('.rm-title-display', {existing: true}, async title => {
+    document.arrive('.roam-article .rm-title-display', {existing: true}, async title => {
         const container = document.createElement('div')
         container.className = containerClass + ', rm-mentions'
 
@@ -35,7 +35,7 @@ const renderPriorityItemForDailyPages = async (container: HTMLElement) => {
     console.log(`Setting up focus items for ${entityUid}`)
     if (!entityUid) return
     const entity = RoamEntity.fromUid(entityUid)
-    const shouldSkipRendering = !entity || !(entity instanceof Page) //|| !RoamDate.onlyPageTitleRegex.test(entity.text)
+    const shouldSkipRendering = !entity || !(entity instanceof Page)
     if (shouldSkipRendering) {
         console.log('Skipping rendering of focus item for non-daily page', entityUid, entity?.text)
         return
