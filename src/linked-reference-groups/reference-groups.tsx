@@ -74,11 +74,12 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
         <Collapse isOpen={isOpen} keepChildrenMounted={true} transitionDuration={0}>
             <div className={'reference-group-controls'}>
                 <div className="srs-buttons date-buttons">
-                    <MoveDateButton shift={1} label={'+1d'}/>
-                    <MoveDateButton shift={-1} label={'-1d'}/>
+                    <MoveDateButton shift={1} label={'+1d'} key="+1"/>
+                    <MoveDateButton shift={-1} label={'-1d'} key="-1"/>
 
                     {SRSSignals.slice(1).map(sig => <Button
                         className={'srs-button date-button'}
+                        key={sig}
                         onClick={async () => {
                             // todo double check if it's still referencing the main page, ignore if not
                             entities.forEach(ent => rescheduleBlock(ent.uid, sig))
@@ -87,13 +88,13 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                         {SRSSignal[sig]}
                     </Button>)}
 
-                    <SpreadButton entities={entities}/>
+                    <SpreadButton entities={entities} key="spread"/>
                 </div>
             </div>
 
             <div className="reference-group-entities">
                 {entities.map(entity =>
-                    <div className={'rm-reference-item'}>
+                    <div className={'rm-reference-item'} key={entity.uid}>
                         <Block uid={entity.uid} key={entity.uid}/>
                     </div>)}
             </div>
