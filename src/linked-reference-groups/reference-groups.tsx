@@ -1,9 +1,11 @@
 import React, {useEffect, useState} from 'react'
 import {RoamEntity} from 'roam-api-wrappers/dist/data'
 import {
-    defaultExclusions, defaultLowPriority,
-    groupByMostCommonReferences,
+    CommonReferencesGrouper,
+    defaultExclusions,
+    defaultLowPriority,
     matchesFilter,
+    mergeGroupsSmallerThan,
 } from 'roam-api-wrappers/dist/data/collection'
 import {Block} from '../components/block'
 import {Button, Collapse} from '@blueprintjs/core'
@@ -129,18 +131,17 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
             return
         }
 
-        const groups = groupByMostCommonReferences(
-            backlinks,
+        const groups = new CommonReferencesGrouper(
+            entityUid,
             [...defaultExclusions, new RegExp(`^${entity.text}$`)],
             {
                 low: [...defaultExclusions, ...defaultLowPriority],
                 high: highPriorityPages,
-            },
-        )
-        // expose possible/hidden groups to user in ux and allow them to select which ones to render
-        console.log({groups})
-        setRenderGroups(Array.from(groups.entries())
-            .filter(([_, entries]) => entries.length >= smallestGroupSize))
+            }).group(backlinks)
+
+        const mergedGroups = mergeGroupsSmallerThan(groups, entityUid, smallestGroupSize)
+        console.log({mergedGroups})
+        setRenderGroups(Array.from(mergedGroups.entries()))
     }
 
     const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
@@ -197,5 +198,5 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
 }
 
 ReferenceGroups.defaultProps = {
-    smallestGroupSize: 1,
+    smallestGroupSize: 2,
 }
