@@ -33,7 +33,8 @@ export class AnkiScheduler implements Scheduler {
 
     static maxInterval = 50 * 365
     static minFactor = 1.3
-    static hardFactor = 1.2
+    // todo experiment
+    static hardFactor = 1.3
     static jitterPercentage = 0.05
 
     schedule(node: SM2Node, signal: SRSSignal): SM2Node {
