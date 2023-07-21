@@ -9,6 +9,7 @@ export enum SRSSignal {
     HARD,
     GOOD,
     EASY,
+    SOONER,
 }
 
-export const SRSSignals = [SRSSignal.AGAIN, SRSSignal.HARD, SRSSignal.GOOD, SRSSignal.EASY]
+export const SRSSignals = [SRSSignal.AGAIN, SRSSignal.HARD, SRSSignal.GOOD, SRSSignal.EASY, SRSSignal.SOONER]

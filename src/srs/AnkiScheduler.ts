@@ -35,6 +35,7 @@ export class AnkiScheduler implements Scheduler {
     static minFactor = 1.3
     // todo experiment
     static hardFactor = 1.3
+    static soonerFactor = 0.75
     static jitterPercentage = 0.05
 
     schedule(node: SM2Node, signal: SRSSignal): SM2Node {
@@ -70,6 +71,9 @@ export class AnkiScheduler implements Scheduler {
             case SRSSignal.EASY:
                 newInterval = interval * factor
                 newFactor = factor + factorModifier
+                break
+            case SRSSignal.SOONER:
+                newInterval = interval * AnkiScheduler.soonerFactor
                 break
         }
 

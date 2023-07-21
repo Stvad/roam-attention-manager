@@ -77,6 +77,7 @@ export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePa
                             rescheduleBlock(blockUid, it)
                             await updateDate()
                         }}
+                        key={it}
                     >
                         {SRSSignal[it]}
                     </button>)}
