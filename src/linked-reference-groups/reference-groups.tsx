@@ -57,6 +57,9 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
             {label}
         </Button>
 
+    // todo: before doing batch actions - apply reference filters & check if this is still has a link to original page
+    // to handle rescheduled & "done" items
+    // also these don't really make sense outside of the daily notes pages
     return <div
         className="reference-group"
         css={{
@@ -135,11 +138,16 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
             entityUid,
             [...defaultExclusions, new RegExp(`^${entity.text}$`)],
             {
-                low: [...defaultExclusions, ...defaultLowPriority],
+                low: [...defaultLowPriority],
                 high: highPriorityPages,
             }).group(backlinks)
 
-        const mergedGroups = mergeGroupsSmallerThan(groups, entityUid, smallestGroupSize)
+        const mergedGroups = mergeGroupsSmallerThan(
+            groups,
+            entityUid,
+            smallestGroupSize,
+            uid => highPriorityPages.some(it => it.test(RoamEntity.fromUid(uid)?.text ?? ''))
+        )
         console.log({mergedGroups})
         setRenderGroups(Array.from(mergedGroups.entries()))
     }
