@@ -73,7 +73,6 @@ export default runExtension({
             refElement.parentNode?.insertBefore(icon, refElement)
         })
 
-        void setupHighlightPriority()
         setupReferenceGroups(extensionAPI)
     },
     unload: () => {
