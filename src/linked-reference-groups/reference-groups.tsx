@@ -111,9 +111,11 @@ interface ReferenceGroupsProps {
     entityUid: string
     smallestGroupSize: number
     highPriorityPages: RegExp[]
+    lowPriorityPages: RegExp[]
+    dontGroupThreshold?: number
 }
 
-export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages}: ReferenceGroupsProps) {
+export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages, lowPriorityPages, dontGroupThreshold = 150}: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
     const [renderGroups, setRenderGroups] = useState<[string, RoamEntity[]][]>([])
     // todo remember collapse state in local storage
@@ -128,7 +130,7 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
 
         const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
         // todo this is ugly?
-        if (backlinks.length > 150 && !refresh) {
+        if (backlinks.length > dontGroupThreshold && !refresh) {
             console.warn(`Too many backlinks (${backlinks.length}) for ${entityUid} - skipping initial render.
              Click refresh to render anyway.`)
             return
@@ -138,7 +140,7 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
             entityUid,
             [...defaultExclusions, new RegExp(`^${entity.text}$`)],
             {
-                low: [...defaultLowPriority],
+                low: lowPriorityPages,
                 high: highPriorityPages,
             }).group(backlinks)
 

@@ -1,6 +1,6 @@
 import * as ReactDOM from 'react-dom'
 import {ReferenceGroups} from './reference-groups'
-import {highPriorityPages} from './config'
+import {Config} from './config'
 import {OnloadArgs} from 'roamjs-components/types'
 import 'arrive'
 
@@ -30,12 +30,13 @@ const renderGroupsForCurrentPage = async (container: HTMLElement, extensionAPI: 
     console.log(`Setting up reference groups for ${entityUid}`)
     if (!entityUid) return
 
+    const config = new Config(extensionAPI)
     ReactDOM.render(<div
         css={{
             marginTop: '1em',
         }}
     >
-        <ReferenceGroups entityUid={entityUid} highPriorityPages={highPriorityPages(extensionAPI)}/>
+        <ReferenceGroups entityUid={entityUid} highPriorityPages={config.highPriorityPages} lowPriorityPages={config.lowPriorityPages} dontGroupThreshold={config.dontGroupThreshold}/>
         <hr/>
     </div>, container)
 }

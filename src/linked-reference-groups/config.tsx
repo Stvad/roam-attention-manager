@@ -4,42 +4,95 @@ import getAllPageNames from 'roamjs-components/queries/getAllPageNames'
 import {OnloadArgs} from 'roamjs-components/types'
 import {ExtensionConfig} from '../core/config'
 
-const valuesConfigName = 'high-priority-tag-values'
+const autoGroupingLimit = 'auto-grouping-limit'
 
-export const highPriorityPages = (extensionAPI: OnloadArgs['extensionAPI']) => {
-    const tags = new ExtensionConfig(extensionAPI).get<Tag[]>(valuesConfigName) || []
-    console.log({tags })
-    return tags.map((it: Tag) => new RegExp(`^${it.name}$`))
-}
+const getAllPageTags = () => getAllPageNames().map(it => ({name: it, id: it}))
 
-export const panelConfig = (extensionAPI: OnloadArgs['extensionAPI']) => ({
-    tabTitle: 'Grouping Configurations',
-    settings: [
-        {
-            id: 'high-priority-tags',
-            name: 'High priority tags',
-            description: 'Things tagged with these pages will be grouped as high priority',
-            action: {
-                type: 'reactComponent',
-                component: () => {
-                    const [highPriorityTags, setPublicTags] = new ExtensionConfig(extensionAPI).useConfigState<Tag[]>(valuesConfigName, [{
-                        id: 0,
-                        name: 'i',
-                    }])
+export const panelConfig = (extensionAPI: OnloadArgs['extensionAPI']) => new Config(extensionAPI).panelConfig
 
-                    const allPageTags = getAllPageNames().map(it => ({name: it, id: it}))
+export class Config {
+    constructor(private extensionAPI: OnloadArgs['extensionAPI']) {
+    }
 
-                    return <TagInput minTags={1}
-                                     suggestions={allPageTags}
-                                     tags={highPriorityTags}
-                                     setTags={setPublicTags}
-                    />
+    keys = {
+        highPriority: 'high-priority-tag-values',
+        lowPriority: 'low-priority-tag-values',
+    }
+
+    get panelConfig() {
+        return {
+            tabTitle: 'Grouping Configurations',
+            settings: [
+                {
+                    id: 'high-priority-tags',
+                    name: 'High priority tags',
+                    description: 'Things tagged with these pages will be grouped as high priority',
+                    action: {
+                        type: 'reactComponent',
+                        component: () => {
+                            return this.tagConfig(this.keys.highPriority)
+                        },
+                        // https://github.com/dvargas92495/roamjs-query-builder/blob/71d41f9d0f80dcf740ab5119e4458e91971e5ad2/src/components/QueryPagesPanel.tsx
+                    } as const,
                 },
-                // https://github.com/dvargas92495/roamjs-query-builder/blob/71d41f9d0f80dcf740ab5119e4458e91971e5ad2/src/components/QueryPagesPanel.tsx
-            } as const,
-        },
-    ],
-})
+                {
+                    id: 'low-priority-tags',
+                    name: 'Low priority tags',
+                    description: 'Things tagged with these pages will be grouped as low priority',
+                    action: {
+                        type: 'reactComponent',
+                        component: () => {
+                            return this.tagConfig(this.keys.lowPriority)
+                        },
+                    } as const,
+                },
+                {
+                    id: autoGroupingLimit,
+                    name: 'Do not automatically run grouping if the number of backlinks is greater than',
+                    description: 'Do not automatically run grouping if the number of backlinks is greater than',
+                    action: {
+                        type: 'input',
+                        placeholder: '150',
+                    } as const,
+                },
+            ],
+        }
+    }
+
+    private tagConfig(writeConfigKey: string) {
+        const [tags, setTags] =
+            new ExtensionConfig(this.extensionAPI).useConfigState<Tag[]>(writeConfigKey, [{
+                id: 0,
+                name: 'task',
+            }])
+
+        return <TagInput minTags={1}
+                         suggestions={getAllPageTags()}
+                         tags={tags}
+                         setTags={setTags}
+        />
+    }
+
+    pagesFromKey(key: string) {
+        const tags = new ExtensionConfig(this.extensionAPI).get<Tag[]>(key) || []
+        console.log({tags})
+        return tags.map((it: Tag) => new RegExp(`^${it.name}$`))
+    }
+
+    get highPriorityPages() {
+        return this.pagesFromKey(this.keys.highPriority)
+    }
+
+    get dontGroupThreshold(): number {
+        const rawValue = this.extensionAPI.settings.get(autoGroupingLimit)
+        console.log({rawValue})
+        return parseInt(rawValue as string ?? '150')
+    }
+
+    get lowPriorityPages() {
+        return this.pagesFromKey(this.keys.lowPriority)
+    }
+}
 
 interface TagInputProps {
     tags: Tag[]
