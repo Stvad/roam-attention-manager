@@ -78,7 +78,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
 
         <Collapse isOpen={isOpen} keepChildrenMounted={true} transitionDuration={0}>
             <div className={'reference-group-controls'}>
-                <div className="srs-buttons date-buttons">
+                <div className="date-buttons">
                     <MoveDateButton shift={1} label={'+1d'} key="+1"/>
                     <MoveDateButton shift={-1} label={'-1d'} key="-1"/>
 
