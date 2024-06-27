@@ -1,5 +1,5 @@
-import {RoamDate} from "roam-api-wrappers/dist/date"
-import {Block} from "roam-api-wrappers/dist/data"
+import {RoamDate} from 'roam-api-wrappers/dist/date'
+import {Block} from 'roam-api-wrappers/dist/data'
 
 const applyToDate = (date: Date, modifier: (input: number) => number): Date => {
     const newDate = new Date(date)
@@ -8,11 +8,16 @@ const applyToDate = (date: Date, modifier: (input: number) => number): Date => {
 }
 export const createModifier = (change: number) => (num: number) => num + change
 
-export function modifyDateInBlock(blockUid: string, modifier: (input: number) => number) {
+export function modifyDateInBlock(blockUid: string, modifier: (input: number) => number, initWithTodayIfMissing = false) {
     const block = Block.fromUid(blockUid)
 
     const datesInContent = block.text.match(RoamDate.referenceRegex)
-    if (!datesInContent) return
+    if (!datesInContent) {
+        if (initWithTodayIfMissing) {
+            block.text = block.text + ' ' + RoamDate.toDatePage(new Date())
+        }
+        return
+    }
 
     block.text = block.text.replace(
         datesInContent[0],

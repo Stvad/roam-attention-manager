@@ -17,6 +17,8 @@ import {setup as setupSRS} from './srs'
 import {setup as setupIncDec} from './inc-dec-value'
 import {createConfigPage} from './config'
 import {panelConfig} from './linked-reference-groups/config'
+import {addSwipeListeners} from './core/swipe'
+import {Block} from 'roam-api-wrappers/dist/data'
 
 const ID = 'attention-manager'
 
@@ -44,6 +46,17 @@ const cleanupBlockObservers = () => {
     observersToCleanup?.forEach((o) => o.disconnect())
 }
 
+const toggleDone = (blockUid: string) => {
+    const block = Block.fromUid(blockUid)
+    if (block.text.startsWith('{{[[DONE]]}} ')) {
+        block.text = block.text.replace('{{[[DONE]]}} ', '')
+    } else if (block.text.startsWith('{{[[TODO]]}} ')) {
+        block.text = block.text.replace('{{[[TODO]]}} ', '{{[[DONE]]}} ')
+    } else {
+        block.text = '{{[[DONE]]}} ' + block.text
+    }
+}
+
 export default runExtension({
     extensionId: ID,
     run: async ({extensionAPI}) => {
@@ -56,13 +69,23 @@ export default runExtension({
 
         //todo do the thing for a specific date object in a block
         observersToCleanup = createBlockObserver((b: HTMLDivElement) => {
+            const blockUid = getUids(b).blockUid
+
+            addSwipeListeners(b, {
+                onSwipeLeft: () => {
+                    DatePanelOverlay({blockUid})
+                },
+                onSwipeRight: () => {
+                    toggleDone(blockUid)
+                },
+                stopPropagation: true,
+            })
+
             if (!hasDateReferenced(b)) return
 
             const refElement = findDateRef(b)
             // no refs don't care. or probably want to have a loop here actually
             if (!refElement || iconAlreadyExists(refElement)) return
-
-            const blockUid = getUids(b).blockUid
 
             const icon = createIconButton('calendar')
             icon.className = iconClass

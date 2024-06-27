@@ -23,6 +23,7 @@ export interface MoveDateButtonProps {
 
 function getFirstDate(blockUid: string) {
     const date = new SM2Node(Block.fromUid(blockUid).text).listDates()[0]
+    if (!date) return "No date"
 
     return date.toLocaleDateString('en-US',
         {weekday: 'short', year: 'numeric', month: 'long', day: 'numeric'})
@@ -40,7 +41,7 @@ export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePa
     const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
         <button className={"date-button"}
                 onClick={async () => {
-                    modifyDateInBlock(blockUid, createModifier(shift))
+                    modifyDateInBlock(blockUid, createModifier(shift), true)
                     await updateDate()
                 }}
         >
