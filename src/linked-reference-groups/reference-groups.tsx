@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react'
-import {RoamEntity} from 'roam-api-wrappers/dist/data'
+import {RoamEntity, Page as RoamPage} from 'roam-api-wrappers/dist/data'
 import {
     CommonReferencesGrouper,
     defaultExclusions,
@@ -11,10 +11,11 @@ import {Block} from '../components/block'
 import {Button, Collapse} from '@blueprintjs/core'
 import {SRSSignal, SRSSignals} from '../srs/scheduler'
 import {rescheduleBlock} from '../srs'
-import {createModifier, modifyDateInBlock} from '../core/date'
+import {createModifier, modifyDateInBlock, replaceDateInBlock} from '../core/date'
 import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
 import {randomFromInterval} from '../core/random'
+import {RoamDate} from 'roam-api-wrappers/dist/date'
 
 interface ReferenceGroupProps {
     uid: string
@@ -44,6 +45,40 @@ const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
                     ent => modifyDateInBlock(ent.uid, createModifier(randomFromInterval(1, days))))
             }}
     >🎲</Button>
+
+function getDateToRescheduleTo(groupUid: string, limit = 10) {
+    const nextDay = new Date()
+    for (let i = 0; i < limit; i++) {
+        nextDay.setDate(nextDay.getDate() + 1)
+        console.log("checking", nextDay)
+        const backlinks = RoamPage.fromName(RoamDate.toRoam(nextDay))?.backlinks
+        console.log({backlinks: backlinks?.map(it => it.text)})
+
+        if (backlinks?.some(it => it.getLinkedEntities(true).some(it => it.uid === groupUid))) {
+            return nextDay
+        }
+    }
+    return nextDay
+}
+
+const NextDayWithThisGroupButton = ({entities, groupUid}: { entities: RoamEntity[], groupUid: string }) => {
+    // move all items in a group to a next day that has the items referencing this group present
+
+    return <Button
+        className={'date-button'}
+        title={'Move all items in this group to the next day that has this group referenced'}
+        onClick={
+            () => {
+                const newDate = getDateToRescheduleTo(groupUid)
+                console.log({newDate})
+
+                entities.forEach(ent => replaceDateInBlock(ent.uid, () => newDate))
+            }
+        }
+    >
+        {'🧲'}
+    </Button>
+}
 
 function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()
@@ -94,6 +129,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                     </Button>)}
 
                     <SpreadButton entities={entities} key="spread"/>
+                    <NextDayWithThisGroupButton entities={entities} groupUid={uid} key="next-day"/>
                 </div>
             </div>
 
@@ -115,7 +151,14 @@ interface ReferenceGroupsProps {
     dontGroupThreshold?: number
 }
 
-export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages, lowPriorityPages, dontGroupThreshold = 150}: ReferenceGroupsProps) {
+export function ReferenceGroups(
+    {
+        entityUid,
+        smallestGroupSize,
+        highPriorityPages,
+        lowPriorityPages,
+        dontGroupThreshold = 150,
+    }: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
     const [renderGroups, setRenderGroups] = useState<[string, RoamEntity[]][]>([])
     // todo remember collapse state in local storage
@@ -148,7 +191,7 @@ export function ReferenceGroups({entityUid, smallestGroupSize, highPriorityPages
             groups,
             entityUid,
             smallestGroupSize,
-            uid => highPriorityPages.some(it => it.test(RoamEntity.fromUid(uid)?.text ?? ''))
+            uid => highPriorityPages.some(it => it.test(RoamEntity.fromUid(uid)?.text ?? '')),
         )
         console.log({mergedGroups})
         setRenderGroups(Array.from(mergedGroups.entries()))

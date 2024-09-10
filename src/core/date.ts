@@ -9,6 +9,10 @@ const applyToDate = (date: Date, modifier: (input: number) => number): Date => {
 export const createModifier = (change: number) => (num: number) => num + change
 
 export function modifyDateInBlock(blockUid: string, modifier: (input: number) => number, initWithTodayIfMissing = false) {
+    replaceDateInBlock(blockUid, (oldDate) => applyToDate(oldDate, modifier), initWithTodayIfMissing)
+}
+
+export const replaceDateInBlock = (blockUid: string, transformer: (oldDate: Date) => Date, initWithTodayIfMissing = false) => {
     const block = Block.fromUid(blockUid)
 
     const datesInContent = block.text.match(RoamDate.referenceRegex)
@@ -21,9 +25,10 @@ export function modifyDateInBlock(blockUid: string, modifier: (input: number) =>
 
     block.text = block.text.replace(
         datesInContent[0],
-        RoamDate.toDatePage(applyToDate(RoamDate.parseFromReference(datesInContent[0]), modifier)),
+        RoamDate.toDatePage(transformer(RoamDate.parseFromReference(datesInContent[0]))),
     )
 }
+
 
 export const addDays = (date: Date, days: number) => applyToDate(date, createModifier(days))
 
