@@ -36,7 +36,7 @@ const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
     <Button className={'date-button'}
             title={'Spread items uniformly across the specified number of days'}
             onClick={() => {
-                const daysStr = prompt('Choose the number of days to spread items through', '7')
+                const daysStr = prompt('Choose the number of days to spread items through', '15')
                 if (!daysStr) return
                 const days = parseInt(daysStr)
                 if (isNaN(days)) return
