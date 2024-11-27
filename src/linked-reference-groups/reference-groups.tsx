@@ -4,6 +4,7 @@ import {
     CommonReferencesGrouper,
     defaultExclusions,
     defaultLowPriority,
+    getGroupsForEntity,
     matchesFilter,
     mergeGroupsSmallerThan,
 } from 'roam-api-wrappers/dist/data/collection'
@@ -46,34 +47,38 @@ const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
             }}
     >🎲</Button>
 
-function getDateToRescheduleTo(groupUid: string, limit = 10) {
+const getDateToRescheduleTo = (entity: RoamEntity, limit: number = 14) => {
+    const groups = getGroupsForEntity(entity, {
+        dontGroupReferencesTo: [...defaultExclusions, ...defaultLowPriority, /^wcs$/],
+    }) // plausibly remove the low priority groups too?
+    //todo maybe an additional setting
     const nextDay = new Date()
+
+    const backlinkEntityReferencesGroup = (bl: RoamEntity, group: RoamEntity) =>
+        bl.getLinkedEntities(true).some(it => it.uid === group.uid)
+
     for (let i = 0; i < limit; i++) {
         nextDay.setDate(nextDay.getDate() + 1)
-        console.log("checking", nextDay)
+        console.log('checking', nextDay)
         const backlinks = RoamPage.fromName(RoamDate.toRoam(nextDay))?.backlinks
         console.log({backlinks: backlinks?.map(it => it.text)})
 
-        if (backlinks?.some(it => it.getLinkedEntities(true).some(it => it.uid === groupUid))) {
+        if (backlinks?.some(bl => groups.some(group => backlinkEntityReferencesGroup(bl, group)))) {
+            console.log('found', nextDay)
             return nextDay
         }
     }
     return nextDay
 }
 
-const NextDayWithThisGroupButton = ({entities, groupUid}: { entities: RoamEntity[], groupUid: string }) => {
+const NextDayWithThisGroupButton = ({entities}: { entities: RoamEntity[] }) => {
     // move all items in a group to a next day that has the items referencing this group present
 
     return <Button
         className={'date-button'}
         title={'Move all items in this group to the next day that has this group referenced'}
-        onClick={
-            () => {
-                const newDate = getDateToRescheduleTo(groupUid)
-                console.log({newDate})
-
-                entities.forEach(ent => replaceDateInBlock(ent.uid, () => newDate))
-            }
+        onClick={() => entities.forEach(ent =>
+            replaceDateInBlock(ent.uid, () => getDateToRescheduleTo(ent)))
         }
     >
         {'🧲'}
@@ -129,7 +134,7 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                     </Button>)}
 
                     <SpreadButton entities={entities} key="spread"/>
-                    <NextDayWithThisGroupButton entities={entities} groupUid={uid} key="next-day"/>
+                    <NextDayWithThisGroupButton entities={entities} key="next-day"/>
                 </div>
             </div>
 
