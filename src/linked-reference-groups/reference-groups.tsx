@@ -249,6 +249,7 @@ export function ReferenceGroups(
                 marginLeft: '0.5em',
             }}
         >
+            {renderGroups.length === 0 && <div>Calculating groups. If there are more then {dontGroupThreshold} backlinks - you need to manually press the refresh button.</div>}
             {renderGroups.map(([uid, entities]) =>
                 <ReferenceGroup uid={uid} entities={entities} key={uid}/>)}
         </Collapse>
