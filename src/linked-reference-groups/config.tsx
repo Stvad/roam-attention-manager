@@ -86,7 +86,7 @@ export class Config {
     get dontGroupThreshold(): number {
         const rawValue = this.extensionAPI.settings.get(autoGroupingLimit)
         console.log({rawValue})
-        return parseInt(rawValue as string ?? '150')
+        return parseInt(rawValue as string || '150')
     }
 
     get lowPriorityPages() {
