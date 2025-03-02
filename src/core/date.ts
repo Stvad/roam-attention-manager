@@ -6,7 +6,10 @@ const applyToDate = (date: Date, modifier: (input: number) => number): Date => {
     newDate.setDate(modifier(date.getDate()))
     return newDate
 }
+
 export const createModifier = (change: number) => (num: number) => num + change
+
+export const daysFromNow = (days: number) => applyToDate(new Date(), createModifier(days))
 
 export function modifyDateInBlock(blockUid: string, modifier: (input: number) => number, initWithTodayIfMissing = false) {
     replaceDateInBlock(blockUid, (oldDate) => applyToDate(oldDate, modifier), initWithTodayIfMissing)

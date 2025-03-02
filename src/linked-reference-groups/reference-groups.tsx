@@ -12,7 +12,7 @@ import {Block} from '../components/block'
 import {Button, Collapse} from '@blueprintjs/core'
 import {SRSSignal, SRSSignals} from '../srs/scheduler'
 import {rescheduleBlock} from '../srs'
-import {createModifier, modifyDateInBlock, replaceDateInBlock} from '../core/date'
+import { createModifier, modifyDateInBlock, replaceDateInBlock, daysFromNow } from '../core/date'
 import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
 import {randomFromInterval} from '../core/random'
@@ -43,7 +43,8 @@ const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
                 if (isNaN(days)) return
 
                 entities.forEach(
-                    ent => modifyDateInBlock(ent.uid, createModifier(randomFromInterval(1, days))))
+                    ent => replaceDateInBlock(ent.uid, () => daysFromNow(randomFromInterval(1, days)))
+                )
             }}
     >🎲</Button>
 
@@ -203,8 +204,9 @@ export function ReferenceGroups(
     }
 
     const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
-        if (event.altKey && event.metaKey && event.keyCode === 82) {
+        if (event.altKey && event.ctrlKey && event.keyCode === 82) {
             updateRenderGroups(true)
+            event.preventDefault()
         }
     }
 
