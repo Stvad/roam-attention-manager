@@ -23,7 +23,7 @@ export const Block = (props: BlockProps) => {
             className: 'squish',
             callback: (b) => {
                 b.click()
-                observer.disconnect()
+                observer?.disconnect()
             },
         })
 
