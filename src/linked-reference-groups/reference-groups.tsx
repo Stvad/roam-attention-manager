@@ -21,6 +21,7 @@ import {RoamDate} from 'roam-api-wrappers/dist/date'
 interface ReferenceGroupProps {
     uid: string
     entities: RoamEntity[]
+    rootPageUid: string
 }
 
 export const useTogglButton = () => {
@@ -33,7 +34,7 @@ export const useTogglButton = () => {
     return {isOpen, ToggleButton}
 }
 
-const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
+const SpreadButton = ({entities}: { entities: () => RoamEntity[] }) =>
     <Button className={'date-button'}
             title={'Spread items uniformly across the specified number of days'}
             onClick={() => {
@@ -42,7 +43,7 @@ const SpreadButton = ({entities}: { entities: RoamEntity[] }) =>
                 const days = parseInt(daysStr)
                 if (isNaN(days)) return
 
-                entities.forEach(
+                entities().forEach(
                     ent => replaceDateInBlock(ent.uid, () => daysFromNow(randomFromInterval(1, days)))
                 )
             }}
@@ -60,25 +61,22 @@ const getDateToRescheduleTo = (entity: RoamEntity, limit: number = 14) => {
 
     for (let i = 0; i < limit; i++) {
         nextDay.setDate(nextDay.getDate() + 1)
-        console.log('checking', nextDay)
         const backlinks = RoamPage.fromName(RoamDate.toRoam(nextDay))?.backlinks
-        console.log({backlinks: backlinks?.map(it => it.text)})
 
         if (backlinks?.some(bl => groups.some(group => backlinkEntityReferencesGroup(bl, group)))) {
-            console.log('found', nextDay)
             return nextDay
         }
     }
     return nextDay
 }
 
-const NextDayWithThisGroupButton = ({entities}: { entities: RoamEntity[] }) => {
+const NextDayWithThisGroupButton = ({entities}: { entities: () => RoamEntity[] }) => {
     // move all items in a group to a next day that has the items referencing this group present
 
     return <Button
         className={'date-button'}
         title={'Move all items in this group to the next day that has this group referenced'}
-        onClick={() => entities.forEach(ent =>
+        onClick={() => entities().forEach(ent =>
             replaceDateInBlock(ent.uid, () => getDateToRescheduleTo(ent)))
         }
     >
@@ -86,12 +84,25 @@ const NextDayWithThisGroupButton = ({entities}: { entities: RoamEntity[] }) => {
     </Button>
 }
 
-function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
+// Refreshing the entities from db to get latest data vs in-memory cache
+const refreshEntities = (entities: RoamEntity[]) =>
+  entities.map(it => RoamEntity.fromUid(it.uid)!)
+
+function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()
+
+    const hasReferenceToRootPage = (ent: RoamEntity) =>
+      ent.linkedEntities.some(it => it.uid === rootPageUid)
+    const shouldBeRescheduled = (ent: RoamEntity) =>
+      hasReferenceToRootPage(ent) &&
+      matchesFilter(ent, RoamEntity.fromUid(rootPageUid)!.referenceFilter)
+
+    const entitiesToReschedule = () => refreshEntities(entities).filter(shouldBeRescheduled)
+
     const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
         <Button className={'date-button'}
                 onClick={() => {
-                    entities.forEach(
+                    entitiesToReschedule().forEach(
                         ent => modifyDateInBlock(ent.uid, createModifier(shift)))
                 }}
         >
@@ -127,15 +138,15 @@ function ReferenceGroup({uid, entities}: ReferenceGroupProps) {
                         className={'srs-button date-button'}
                         key={sig}
                         onClick={async () => {
-                            // todo double check if it's still referencing the main page, ignore if not
+                            // deliberately using un-updated entities here for now 🤔
                             entities.forEach(ent => rescheduleBlock(ent.uid, sig))
                         }}
                     >
                         {SRSSignal[sig]}
                     </Button>)}
 
-                    <SpreadButton entities={entities} key="spread"/>
-                    <NextDayWithThisGroupButton entities={entities} key="next-day"/>
+                    <SpreadButton entities={entitiesToReschedule} key="spread"/>
+                    <NextDayWithThisGroupButton entities={entitiesToReschedule} key="next-day"/>
                 </div>
             </div>
 
@@ -253,7 +264,7 @@ export function ReferenceGroups(
         >
             {renderGroups.length === 0 && <div>Calculating groups. If there are more then {dontGroupThreshold} backlinks - you need to manually press the refresh button.</div>}
             {renderGroups.map(([uid, entities]) =>
-                <ReferenceGroup uid={uid} entities={entities} key={uid}/>)}
+                <ReferenceGroup uid={uid} entities={entities} rootPageUid={entityUid} key={uid}/>)}
         </Collapse>
     </div>
 }
