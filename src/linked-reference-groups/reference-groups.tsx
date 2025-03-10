@@ -93,16 +93,19 @@ function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
 
     const hasReferenceToRootPage = (ent: RoamEntity) =>
       ent.linkedEntities.some(it => it.uid === rootPageUid)
+    const matchesFilters = (ent: RoamEntity) =>
+      matchesFilter(ent, RoamEntity.fromUid(rootPageUid)!.referenceFilter)
     const shouldBeRescheduled = (ent: RoamEntity) =>
       hasReferenceToRootPage(ent) &&
-      matchesFilter(ent, RoamEntity.fromUid(rootPageUid)!.referenceFilter)
+      matchesFilters(ent)
 
     const entitiesToReschedule = () => refreshEntities(entities).filter(shouldBeRescheduled)
+    const movableEntities = () => refreshEntities(entities).filter(matchesFilters)
 
     const MoveDateButton = ({shift, label}: MoveDateButtonProps) =>
         <Button className={'date-button'}
                 onClick={() => {
-                    entitiesToReschedule().forEach(
+                    movableEntities().forEach(
                         ent => modifyDateInBlock(ent.uid, createModifier(shift)))
                 }}
         >
