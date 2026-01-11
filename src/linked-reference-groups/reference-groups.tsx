@@ -9,6 +9,7 @@ import {
     mergeGroupsSmallerThan,
 } from 'roam-api-wrappers/dist/data/collection'
 import {Block} from '../components/block'
+import {usePromptDialog} from '../components/prompt-dialog'
 import {Button, Collapse} from '@blueprintjs/core'
 import {SRSSignal, SRSSignals} from '../srs/scheduler'
 import {rescheduleBlock} from '../srs'
@@ -34,20 +35,32 @@ export const useTogglButton = () => {
     return {isOpen, ToggleButton}
 }
 
-const SpreadButton = ({entities}: { entities: () => RoamEntity[] }) =>
-    <Button className={'date-button'}
-            title={'Spread items uniformly across the specified number of days'}
-            onClick={() => {
-                const daysStr = prompt('Choose the number of days to spread items through', '15')
-                if (!daysStr) return
-                const days = parseInt(daysStr)
-                if (isNaN(days)) return
+const SpreadButton = ({entities}: { entities: () => RoamEntity[] }) => {
+    const {openPrompt, PromptDialog} = usePromptDialog()
 
-                entities().forEach(
-                    ent => replaceDateInBlock(ent.uid, () => daysFromNow(randomFromInterval(1, days)))
-                )
-            }}
-    >🎲</Button>
+    const handleClick = () => {
+        openPrompt({
+            title: 'Spread Items',
+            message: 'Choose the number of days to spread items through:',
+            defaultValue: '15',
+            inputType: 'number',
+        }, (daysStr) => {
+            const days = parseInt(daysStr)
+            if (isNaN(days)) return
+            entities().forEach(
+                ent => replaceDateInBlock(ent.uid, () => daysFromNow(randomFromInterval(1, days)))
+            )
+        })
+    }
+
+    return <>
+        <Button className={'date-button'}
+                title={'Spread items uniformly across the specified number of days'}
+                onClick={handleClick}
+        >🎲</Button>
+        <PromptDialog />
+    </>
+}
 
 const getDateToRescheduleTo = (entity: RoamEntity, limit: number = 14) => {
     const groups = getGroupsForEntity(entity, {
