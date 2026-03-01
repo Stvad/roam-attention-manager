@@ -11,6 +11,7 @@ import './date-panel.css'
 import {delay} from './core/async'
 import {createOverlayRender} from 'roamjs-components/util'
 import {rescheduleBlock} from './srs'
+import {migrateBlockToMemo, showMigrationToast, MigrationResult} from './srs/migrate-to-memo'
 
 export type DatePanelProps = {
     blockUid: string
@@ -28,6 +29,30 @@ function getFirstDate(blockUid: string) {
     return date.toLocaleDateString('en-US',
         {weekday: 'short', year: 'numeric', month: 'long', day: 'numeric'})
 
+}
+
+const migrationResultMessages: Record<MigrationResult, {message: string, intent: 'success' | 'warning' | 'danger'}> = {
+    'success': {message: 'Migrated to roam/memo', intent: 'success'},
+    'not-found': {message: 'No roam-toolkit metadata found', intent: 'warning'},
+    'already-exists': {message: 'Already migrated to roam/memo', intent: 'warning'},
+    'error': {message: 'Migration failed — check console', intent: 'danger'},
+}
+
+const MigrateToMemoButton = ({blockUid}: {blockUid: string}) => {
+    const [migrated, setMigrated] = useState(false)
+
+    return <button
+        className={"date-button migrate-memo-button" + (migrated ? ' migrated' : '')}
+        disabled={migrated}
+        onClick={async () => {
+            const result = await migrateBlockToMemo(blockUid)
+            const {message, intent} = migrationResultMessages[result]
+            showMigrationToast(message, intent)
+            if (result === 'success' || result === 'already-exists') setMigrated(true)
+        }}
+    >
+        {migrated ? '✅' : '📦'}
+    </button>
 }
 
 export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePanelProps) => {
@@ -82,6 +107,7 @@ export const DatePanel = ({blockUid, onClose}: { onClose: () => void; } & DatePa
                     >
                         {SRSSignal[it]}
                     </button>)}
+                    <MigrateToMemoButton blockUid={blockUid}/>
                 </div>
             </div>
         </div>

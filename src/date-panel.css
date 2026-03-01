@@ -38,3 +38,8 @@
 .srs-buttons {
     flex-wrap: wrap;
 }
+
+.migrate-memo-button.migrated {
+    opacity: 0.6;
+    cursor: default;
+}
