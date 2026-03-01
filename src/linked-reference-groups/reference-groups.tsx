@@ -18,7 +18,7 @@ import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
 import {randomFromInterval} from '../core/random'
 import {RoamDate} from 'roam-api-wrappers/dist/date'
-import {migrateBlockToMemo} from '../srs/migrate-to-memo'
+import {migrateBlockToMemo, showMigrationToast} from '../srs/migrate-to-memo'
 
 interface ReferenceGroupProps {
     uid: string
@@ -171,13 +171,14 @@ function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
                         onClick={async () => {
                             let migrated = 0
                             for (const ent of entities) {
-                                const success = await migrateBlockToMemo(ent.uid)
-                                if (success) migrated++
+                                const result = await migrateBlockToMemo(ent.uid)
+                                if (result === 'success') migrated++
                             }
-                            console.log(`Migrated ${migrated}/${entities.length} blocks to roam/memo`)
+                            const intent = migrated > 0 ? 'success' : 'warning'
+                            showMigrationToast(`Migrated ${migrated}/${entities.length} blocks`, intent)
                         }}
                     >
-                        📦→memo
+                        📦
                     </Button>
                 </div>
             </div>

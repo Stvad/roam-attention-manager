@@ -1,10 +1,21 @@
 import {Block} from 'roam-api-wrappers/dist/data'
 import {RoamDate} from 'roam-api-wrappers/dist/date'
+import {Toaster, Intent, Position} from '@blueprintjs/core'
 import {RoamNode} from './SM2Node'
 
 const MEMO_DATA_PAGE = 'roam/memo'
 const ARCHIVE_PAGE = 'roam-toolkit-srs/archive'
 const SRM_TAG = 'srm'
+
+const toaster = Toaster.create({position: Position.TOP})
+
+export type MigrationResult = 'success' | 'not-found' | 'already-exists' | 'error'
+
+type IntentType = typeof Intent[keyof typeof Intent]
+
+export function showMigrationToast(message: string, intent: IntentType = Intent.SUCCESS) {
+    toaster.show({message, intent})
+}
 
 export const MIGRATION_EVENT = 'roam-date:migrate-to-memo'
 export const MIGRATION_RESULT_EVENT = 'roam-date:migrate-to-memo:done'
@@ -56,6 +67,11 @@ interface MigrationEventDetail {
 
 // --- Pure functions (exported for testing) ---
 
+function parseFloatOrDefault(str: string, defaultValue: number): number {
+    const parsed = parseFloat(str)
+    return isNaN(parsed) ? defaultValue : parsed
+}
+
 export function parseMetadataFromText(text: string): ParsedMetadata | null {
     const node = new RoamNode(text)
     const intervalStr = node.getInlineProperty('interval')
@@ -71,8 +87,8 @@ export function parseMetadataFromText(text: string): ParsedMetadata | null {
     const starCount = (text.match(/\*/g) || []).length
 
     return {
-        interval: intervalStr ? parseFloat(intervalStr) || 1 : 1,
-        factor: factorStr ? parseFloat(factorStr) || 2.5 : 2.5,
+        interval: intervalStr ? parseFloatOrDefault(intervalStr, 1) : 1,
+        factor: factorStr ? parseFloatOrDefault(factorStr, 2.5) : 2.5,
         nextDueDate,
         starCount,
     }
@@ -107,6 +123,15 @@ export function stripRoamToolkitMetadata(text: string): string {
 
 // --- Roam API helpers (internal) ---
 
+function getParentUid(blockUid: string): string | null {
+    const results = window.roamAlphaAPI.q(`
+        [:find ?parent-uid :in $ ?uid :where
+         [?block :block/uid ?uid]
+         [?parent :block/children ?block]
+         [?parent :block/uid ?parent-uid]]`, blockUid) as string[][]
+    return results?.length ? results[0][0] : null
+}
+
 function getChildBlocks(parentUid: string): ChildBlockResult[] {
     const results = window.roamAlphaAPI.q(`
         [:find (pull ?child [:block/uid :block/string :block/order])
@@ -119,12 +144,28 @@ function getChildBlocks(parentUid: string): ChildBlockResult[] {
         .sort((a, b) => a.order - b.order)
 }
 
-function findMigrationSource(blockUid: string): MigrationSource | null {
+export function findMigrationSource(blockUid: string): MigrationSource | null {
     const block = Block.fromUid(blockUid)
     if (!block) return null
 
     const inlineMetadata = parseMetadataFromText(block.text)
     if (inlineMetadata) {
+        const stripped = stripRoamToolkitMetadata(block.text)
+        if (!stripped) {
+            // Block is metadata-only — use parent as the review block
+            const parentUid = getParentUid(blockUid)
+            if (parentUid) {
+                return {
+                    reviewBlockUid: parentUid,
+                    metadata: inlineMetadata,
+                    metadataBlockUid: blockUid,
+                    metadataIsInline: false,
+                }
+            }
+            // No parent found — this is a top-level metadata-only block, skip migration
+            console.warn(`Metadata-only block ${blockUid} has no parent block — skipping migration`)
+            return null
+        }
         return {
             reviewBlockUid: blockUid,
             metadata: inlineMetadata,
@@ -247,7 +288,7 @@ export function previewMigration(blockUid: string): MigrationPreview {
         memoData: {
             grade,
             eFactor: factor,
-            interval: Math.round(interval),
+            interval,
             repetitions,
             nextDueDate: effectiveNextDueDate,
             reviewMode: 'SPACED_INTERVAL',
@@ -258,84 +299,109 @@ export function previewMigration(blockUid: string): MigrationPreview {
 
 // --- Core migration ---
 
-export async function migrateBlockToMemo(blockUid: string): Promise<boolean> {
-    const source = findMigrationSource(blockUid)
-    if (!source) {
-        console.log(`No roam-toolkit SRS metadata found for block ${blockUid}`)
-        return false
-    }
+export async function migrateBlockToMemo(blockUid: string): Promise<MigrationResult> {
+    try {
+        const source = findMigrationSource(blockUid)
+        if (!source) {
+            console.log(`No roam-toolkit SRS metadata found for block ${blockUid}`)
+            return 'not-found'
+        }
 
-    const {reviewBlockUid, metadata, metadataBlockUid, metadataIsInline} = source
-    const {interval, factor, nextDueDate, starCount} = metadata
+        const {reviewBlockUid, metadata, metadataBlockUid, metadataIsInline} = source
+        const {interval, factor, nextDueDate, starCount} = metadata
 
-    // Default to Good (4) since roam-toolkit doesn't store per-review grades
-    const grade = 4
-    const repetitions = estimateRepetitions(interval, starCount)
-    const effectiveNextDueDate = nextDueDate || new Date(Date.now() + interval * 24 * 60 * 60 * 1000)
-    const emoji = gradeToEmoji(grade)
-    const dateCreated = new Date()
+        // Default to Good (4) since roam-toolkit doesn't store per-review grades
+        const grade = 4
+        const repetitions = estimateRepetitions(interval, starCount)
+        const effectiveNextDueDate = nextDueDate || new Date(Date.now() + interval * 24 * 60 * 60 * 1000)
+        const emoji = gradeToEmoji(grade)
+        const dateCreated = new Date()
 
-    // 1. Create roam/memo data entry
-    await getOrCreatePageUid(MEMO_DATA_PAGE)
-    const dataBlockUid = await getOrCreateBlockOnPage(MEMO_DATA_PAGE, 'data', -1, {
-        open: false,
-        heading: 3,
-    })
-
-    const existingEntry = getChildBlockByPrefix(dataBlockUid, `((${reviewBlockUid}))`)
-    if (existingEntry) {
-        console.log(`roam/memo entry already exists for block ${reviewBlockUid}, skipping`)
-        return false
-    }
-
-    const cardBlockUid = await createChildBlock(dataBlockUid, `((${reviewBlockUid}))`, 0, {open: false})
-    const sessionBlockUid = await createChildBlock(
-        cardBlockUid,
-        `[[${RoamDate.toRoam(dateCreated)}]] ${emoji}`,
-        0,
-        {open: false},
-    )
-    await createChildBlock(sessionBlockUid, `grade:: ${grade}`, -1)
-    await createChildBlock(sessionBlockUid, `eFactor:: ${factor}`, -1)
-    await createChildBlock(sessionBlockUid, `interval:: ${Math.round(interval)}`, -1)
-    await createChildBlock(sessionBlockUid, `repetitions:: ${repetitions}`, -1)
-    await createChildBlock(sessionBlockUid, `nextDueDate:: [[${RoamDate.toRoam(effectiveNextDueDate)}]]`, -1)
-    await createChildBlock(sessionBlockUid, `reviewMode:: SPACED_INTERVAL`, -1)
-
-    // 2. Archive old metadata
-    const originalText = Block.fromUid(metadataBlockUid)?.text || ''
-    await getOrCreatePageUid(ARCHIVE_PAGE)
-    const archiveEntryUid = await getOrCreateBlockOnPage(
-        ARCHIVE_PAGE, `((${reviewBlockUid}))`, 0, {open: false},
-    )
-
-    if (metadataIsInline) {
-        await createChildBlock(archiveEntryUid, originalText, -1)
-        const stripped = stripRoamToolkitMetadata(originalText)
-        const block = Block.fromUid(metadataBlockUid)
-        if (block) block.text = stripped
-    } else {
-        await window.roamAlphaAPI.moveBlock({
-            location: {'parent-uid': archiveEntryUid, order: -1},
-            block: {uid: metadataBlockUid},
+        // 1. Create roam/memo data entry
+        await getOrCreatePageUid(MEMO_DATA_PAGE)
+        const dataBlockUid = await getOrCreateBlockOnPage(MEMO_DATA_PAGE, 'data', -1, {
+            open: false,
+            heading: 3,
         })
-    }
 
-    // 3. Tag review block with #srm
-    const reviewBlock = Block.fromUid(reviewBlockUid)
-    if (reviewBlock && !reviewBlock.text.includes(`#${SRM_TAG}`)) {
-        reviewBlock.text = reviewBlock.text + ` #${SRM_TAG}`
-    }
+        const existingEntry = getChildBlockByPrefix(dataBlockUid, `((${reviewBlockUid}))`)
+        if (existingEntry) {
+            console.log(`roam/memo entry already exists for block ${reviewBlockUid}, skipping`)
+            return 'already-exists'
+        }
 
-    console.log(`Migrated block ${reviewBlockUid} to roam/memo format`)
-    return true
+        const cardBlockUid = await createChildBlock(dataBlockUid, `((${reviewBlockUid}))`, 0, {open: false})
+        const sessionBlockUid = await createChildBlock(
+            cardBlockUid,
+            `[[${RoamDate.toRoam(dateCreated)}]] ${emoji}`,
+            0,
+            {open: false},
+        )
+        await createChildBlock(sessionBlockUid, `grade:: ${grade}`, -1)
+        await createChildBlock(sessionBlockUid, `eFactor:: ${factor}`, -1)
+        await createChildBlock(sessionBlockUid, `interval:: ${interval}`, -1)
+        await createChildBlock(sessionBlockUid, `repetitions:: ${repetitions}`, -1)
+        await createChildBlock(sessionBlockUid, `nextDueDate:: [[${RoamDate.toRoam(effectiveNextDueDate)}]]`, -1)
+        await createChildBlock(sessionBlockUid, `reviewMode:: SPACED_INTERVAL`, -1)
+
+        // 2. Archive old metadata
+        const originalText = Block.fromUid(metadataBlockUid)?.text || ''
+        await getOrCreatePageUid(ARCHIVE_PAGE)
+        const archiveEntryUid = await getOrCreateBlockOnPage(
+            ARCHIVE_PAGE, `((${reviewBlockUid}))`, 0, {open: false},
+        )
+
+        if (metadataIsInline) {
+            // Inline: strip metadata and add #srm in a single write to avoid race condition
+            await createChildBlock(archiveEntryUid, originalText, -1)
+            let stripped = stripRoamToolkitMetadata(originalText)
+            if (!stripped.includes(`#${SRM_TAG}`)) {
+                stripped = (stripped ? stripped + ' ' : '') + `#${SRM_TAG}`
+            }
+            const block = Block.fromUid(metadataBlockUid)
+            if (block) block.text = stripped
+        } else {
+            // Child metadata block: move to archive, then tag review block (separate blocks, no race)
+            await window.roamAlphaAPI.moveBlock({
+                location: {'parent-uid': archiveEntryUid, order: -1},
+                block: {uid: metadataBlockUid},
+            })
+            const reviewBlock = Block.fromUid(reviewBlockUid)
+            if (reviewBlock && !reviewBlock.text.includes(`#${SRM_TAG}`)) {
+                reviewBlock.text = reviewBlock.text + ` #${SRM_TAG}`
+            }
+        }
+
+        console.log(`Migrated block ${reviewBlockUid} to roam/memo format`)
+        return 'success'
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`Migration failed for block ${blockUid}:`, error)
+        return 'error'
+    }
 }
 
 export async function migrateCurrentBlockToMemo() {
     const currentBlockUid = window.roamAlphaAPI.ui.getFocusedBlock()?.['block-uid']
-    if (!currentBlockUid) return
-    const success = await migrateBlockToMemo(currentBlockUid)
-    console.log(success ? 'Migration complete' : 'No roam-toolkit metadata found or already migrated')
+    if (!currentBlockUid) {
+        toaster.show({message: 'No block focused', intent: Intent.WARNING})
+        return
+    }
+    const result = await migrateBlockToMemo(currentBlockUid)
+    switch (result) {
+        case 'success':
+            toaster.show({message: 'Migrated to roam/memo', intent: Intent.SUCCESS})
+            break
+        case 'not-found':
+            toaster.show({message: 'No roam-toolkit metadata found', intent: Intent.WARNING})
+            break
+        case 'already-exists':
+            toaster.show({message: 'Already migrated to roam/memo', intent: Intent.WARNING})
+            break
+        case 'error':
+            toaster.show({message: 'Migration failed — check console', intent: Intent.DANGER})
+            break
+    }
 }
 
 // --- Browser event listener (for cross-plugin triggering) ---
@@ -355,9 +421,9 @@ function handleMigrationEvent(event: Event) {
             detail: {blockUid: detail.blockUid, success: preview.found && !preview.alreadyMigrated, preview},
         }))
     } else {
-        void migrateBlockToMemo(detail.blockUid).then(success => {
+        void migrateBlockToMemo(detail.blockUid).then(result => {
             document.dispatchEvent(new CustomEvent(MIGRATION_RESULT_EVENT, {
-                detail: {blockUid: detail.blockUid, success},
+                detail: {blockUid: detail.blockUid, success: result === 'success', result},
             }))
         })
     }

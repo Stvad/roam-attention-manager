@@ -23,9 +23,16 @@ jest.mock('roam-api-wrappers/dist/date', () => ({
     },
 }))
 
+const mockFromUid = jest.fn()
 jest.mock('roam-api-wrappers/dist/data', () => ({
-    Block: { fromUid: jest.fn() },
+    Block: { fromUid: (...args: unknown[]) => mockFromUid(...args) },
     Roam: {},
+}))
+
+jest.mock('@blueprintjs/core', () => ({
+    Toaster: { create: () => ({ show: jest.fn() }) },
+    Intent: { SUCCESS: 'success', WARNING: 'warning', DANGER: 'danger' },
+    Position: { TOP: 'top' },
 }))
 
 import {
@@ -33,6 +40,7 @@ import {
     estimateRepetitions,
     stripRoamToolkitMetadata,
     gradeToEmoji,
+    findMigrationSource,
     MIGRATION_EVENT,
     MIGRATION_RESULT_EVENT,
 } from '../migrate-to-memo'
@@ -86,13 +94,12 @@ describe('parseMetadataFromText', () => {
         expect(result!.factor).toBe(2.5)
     })
 
-    it('handles zero interval by defaulting to 1', () => {
+    it('preserves zero interval instead of defaulting to 1', () => {
         const text = '[[[[interval]]:0]]'
         const result = parseMetadataFromText(text)
 
         expect(result).not.toBeNull()
-        // parseFloat('0') is 0 which is falsy, so || 1 kicks in
-        expect(result!.interval).toBe(1)
+        expect(result!.interval).toBe(0)
     })
 
     it('counts stars correctly with varying whitespace', () => {
@@ -202,6 +209,18 @@ describe('stripRoamToolkitMetadata', () => {
         expect(result).toBe('')
     })
 
+    it('returns empty for metadata-only block with all fields', () => {
+        const text = ' [[[[interval]]:13.1]] [[[[factor]]:1.30]] [[March 1st, 2026]] * * * * * * * * * * * * * * * * '
+        const result = stripRoamToolkitMetadata(text)
+        expect(result).toBe('')
+    })
+
+    it('preserves content when block has both text and metadata', () => {
+        const text = 'statins - plausible should start taking them- research[[[[interval]]:2.4]] [[[[factor]]:2.5]]  [[March 1st, 2026]]'
+        const result = stripRoamToolkitMetadata(text)
+        expect(result).toBe('statins - plausible should start taking them- research')
+    })
+
     it('handles double colon format', () => {
         const text = 'Block text [[[[interval]]::15.0]] [[[[factor]]::2.50]]'
         const result = stripRoamToolkitMetadata(text)
@@ -212,6 +231,129 @@ describe('stripRoamToolkitMetadata', () => {
         const text = 'Hello  [[[[interval]]:5]]  world'
         const result = stripRoamToolkitMetadata(text)
         expect(result).toBe('Hello world')
+    })
+})
+
+describe('metadata-only block detection', () => {
+    it('detects metadata-only block (stripped text is empty)', () => {
+        const metadataOnly = ' [[[[interval]]:13.1]] [[[[factor]]:1.30]] [[March 1st, 2026]] * * * * '
+        const stripped = stripRoamToolkitMetadata(metadataOnly)
+        expect(stripped).toBe('')
+        expect(parseMetadataFromText(metadataOnly)).not.toBeNull()
+    })
+
+    it('detects block with real content (stripped text is non-empty)', () => {
+        const withContent = 'Review this [[[[interval]]:2.4]] [[[[factor]]:2.5]] [[March 1st, 2026]]'
+        const stripped = stripRoamToolkitMetadata(withContent)
+        expect(stripped).not.toBe('')
+        expect(parseMetadataFromText(withContent)).not.toBeNull()
+    })
+})
+
+describe('interval preservation', () => {
+    it('parseMetadataFromText preserves decimal intervals', () => {
+        const text = '[[[[interval]]:2.4]] [[[[factor]]:2.5]]'
+        const result = parseMetadataFromText(text)
+        expect(result!.interval).toBe(2.4)
+    })
+
+    it('parseMetadataFromText preserves decimal intervals like 13.1', () => {
+        const text = '[[[[interval]]:13.1]] [[[[factor]]:1.30]]'
+        const result = parseMetadataFromText(text)
+        expect(result!.interval).toBe(13.1)
+        expect(result!.factor).toBe(1.3)
+    })
+})
+
+describe('findMigrationSource', () => {
+    const mockQ = jest.fn()
+
+    beforeEach(() => {
+        mockFromUid.mockReset()
+        mockQ.mockReset()
+        ;(globalThis as Record<string, unknown>).window = {
+            roamAlphaAPI: { q: mockQ },
+        }
+    })
+
+    afterEach(() => {
+        delete (globalThis as Record<string, unknown>).window
+    })
+
+    it('returns inline source when block has metadata and non-empty stripped text', () => {
+        mockFromUid.mockReturnValue({
+            text: 'Review this [[[[interval]]:5]] [[[[factor]]:2.5]]',
+        })
+
+        const result = findMigrationSource('block1')
+
+        expect(result).not.toBeNull()
+        expect(result!.reviewBlockUid).toBe('block1')
+        expect(result!.metadataBlockUid).toBe('block1')
+        expect(result!.metadataIsInline).toBe(true)
+        expect(result!.metadata.interval).toBe(5)
+    })
+
+    it('uses parent as review block when block is metadata-only', () => {
+        mockFromUid.mockReturnValue({
+            text: '[[[[interval]]:13.1]] [[[[factor]]:1.30]] [[March 1st, 2026]] * * *',
+        })
+        // getParentUid query returns parent uid
+        mockQ.mockReturnValue([['parent-uid-123']])
+
+        const result = findMigrationSource('metadata-block')
+
+        expect(result).not.toBeNull()
+        expect(result!.reviewBlockUid).toBe('parent-uid-123')
+        expect(result!.metadataBlockUid).toBe('metadata-block')
+        expect(result!.metadataIsInline).toBe(false)
+    })
+
+    it('returns null for metadata-only block with no parent', () => {
+        mockFromUid.mockReturnValue({
+            text: '[[[[interval]]:5]] [[[[factor]]:2.5]]',
+        })
+        // getParentUid query returns no results
+        mockQ.mockReturnValue([])
+
+        const result = findMigrationSource('orphan-block')
+
+        expect(result).toBeNull()
+    })
+
+    it('finds metadata in child blocks when parent has none', () => {
+        mockFromUid.mockReturnValue({ text: 'Parent block with no metadata' })
+        // getChildBlocks query returns a child with metadata
+        mockQ.mockReturnValue([
+            [{ uid: 'child1', string: '[[[[interval]]:10]] [[[[factor]]:2.0]]', order: 0 }],
+        ])
+
+        const result = findMigrationSource('parent-block')
+
+        expect(result).not.toBeNull()
+        expect(result!.reviewBlockUid).toBe('parent-block')
+        expect(result!.metadataBlockUid).toBe('child1')
+        expect(result!.metadataIsInline).toBe(false)
+    })
+
+    it('returns null when block has no metadata and no children with metadata', () => {
+        mockFromUid.mockReturnValue({ text: 'Just a plain block' })
+        // getChildBlocks query returns children without metadata
+        mockQ.mockReturnValue([
+            [{ uid: 'child1', string: 'No metadata here', order: 0 }],
+        ])
+
+        const result = findMigrationSource('plain-block')
+
+        expect(result).toBeNull()
+    })
+
+    it('returns null when block does not exist', () => {
+        mockFromUid.mockReturnValue(null)
+
+        const result = findMigrationSource('nonexistent')
+
+        expect(result).toBeNull()
     })
 })
 
