@@ -3,6 +3,7 @@ import {AnkiAttentionScheduler, AnkiScheduler} from './AnkiScheduler'
 import {Block} from 'roam-api-wrappers/dist/data'
 import {SM2Node} from './SM2Node'
 import {setupFeatureShortcuts} from '../core/config'
+import {migrateCurrentBlockToMemo} from './migrate-to-memo'
 
 export function rescheduleBlock(blockUid: string, signal: SRSSignal) {
     // todo make this configurable (knowledge vs attention)
@@ -14,13 +15,22 @@ export function rescheduleBlock(blockUid: string, signal: SRSSignal) {
 export const config = {
     id: 'srs',
     name: 'Spaced Repetition',
-    settings: SRSSignals.map(it => ({
-        type: 'shortcut',
-        id: `srs_${SRSSignal[it]}`,
-        label: `SRS: ${SRSSignal[it]}`,
-        initValue: `ctrl+shift+${it},ctrl+shift+alt+command+${it},`,
-        onPress: () => rescheduleCurrentNote(it),
-    })),
+    settings: [
+        ...SRSSignals.map(it => ({
+            type: 'shortcut',
+            id: `srs_${SRSSignal[it]}`,
+            label: `SRS: ${SRSSignal[it]}`,
+            initValue: `ctrl+shift+${it},ctrl+shift+alt+command+${it},`,
+            onPress: () => rescheduleCurrentNote(it),
+        })),
+        {
+            type: 'shortcut',
+            id: 'srs_migrate_memo',
+            label: 'SRS: Migrate to roam/memo',
+            initValue: 'ctrl+shift+m',
+            onPress: () => migrateCurrentBlockToMemo(),
+        },
+    ],
 }
 
 export function rescheduleCurrentNote(signal: SRSSignal) {

@@ -18,6 +18,7 @@ import {MoveDateButtonProps} from '../date-panel'
 import {delay} from '../core/async'
 import {randomFromInterval} from '../core/random'
 import {RoamDate} from 'roam-api-wrappers/dist/date'
+import {migrateBlockToMemo} from '../srs/migrate-to-memo'
 
 interface ReferenceGroupProps {
     uid: string
@@ -163,6 +164,21 @@ function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
 
                     <SpreadButton entities={entitiesToReschedule} key="spread"/>
                     <NextDayWithThisGroupButton entities={entitiesToReschedule} key="next-day"/>
+                    <Button
+                        className={'date-button'}
+                        title={'Migrate roam-toolkit SRS metadata to roam/memo format'}
+                        key="migrate-memo"
+                        onClick={async () => {
+                            let migrated = 0
+                            for (const ent of entities) {
+                                const success = await migrateBlockToMemo(ent.uid)
+                                if (success) migrated++
+                            }
+                            console.log(`Migrated ${migrated}/${entities.length} blocks to roam/memo`)
+                        }}
+                    >
+                        📦→memo
+                    </Button>
                 </div>
             </div>
 
