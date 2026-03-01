@@ -3,7 +3,7 @@ import {AnkiAttentionScheduler, AnkiScheduler} from './AnkiScheduler'
 import {Block} from 'roam-api-wrappers/dist/data'
 import {SM2Node} from './SM2Node'
 import {setupFeatureShortcuts} from '../core/config'
-import {migrateCurrentBlockToMemo} from './migrate-to-memo'
+import {migrateCurrentBlockToMemo, setupMigrationEventListener, teardownMigrationEventListener} from './migrate-to-memo'
 
 export function rescheduleBlock(blockUid: string, signal: SRSSignal) {
     // todo make this configurable (knowledge vs attention)
@@ -42,4 +42,9 @@ export function rescheduleCurrentNote(signal: SRSSignal) {
 
 export const setup = () => {
     setupFeatureShortcuts(config)
+    setupMigrationEventListener()
+}
+
+export const teardown = () => {
+    teardownMigrationEventListener()
 }

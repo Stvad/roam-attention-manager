@@ -13,7 +13,7 @@ import {disableNavigation, setupNavigation} from './navigation'
 import {setup as setupFuzzies, disable as disableFuzzies} from './fuzzy-date'
 import {setup as setupReferenceGroups} from './linked-reference-groups'
 import {setup as setupHighlightPriority} from './highlight-priority'
-import {setup as setupSRS} from './srs'
+import {setup as setupSRS, teardown as teardownSRS} from './srs'
 import {setup as setupIncDec} from './inc-dec-value'
 import {createConfigPage} from './config'
 import {panelConfig} from './linked-reference-groups/config'
@@ -101,6 +101,7 @@ export default runExtension({
     unload: () => {
         disableFuzzies()
         disableNavigation()
+        teardownSRS()
         removeIconButtons()
         cleanupBlockObservers()
     },

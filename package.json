@@ -9,15 +9,19 @@
     "dev:depot": "roamjs-scripts dev --depot",
     "deploy": "netlify deploy --prod -s attention-manager.netlify.app -d build",
     "prebuild:roam": "yarn install",
-    "build:roam": "roamjs-scripts build --depot"
+    "build:roam": "roamjs-scripts build --depot",
+    "test": "jest"
   },
   "license": "MIT",
   "devDependencies": {
     "@types/arrive": "^2.4.1",
+    "@types/jest": "^30.0.0",
     "@types/react": "^17.0.31",
     "@types/react-dom": "^17.0.10",
     "@types/react-tag-autocomplete": "^6.3.0",
+    "jest": "^30.2.0",
     "roamjs-scripts": "^0.21.11",
+    "ts-jest": "^29.4.6",
     "typescript": "^4.8.2"
   },
   "dependencies": {

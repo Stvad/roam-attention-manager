@@ -6,11 +6,34 @@ const MEMO_DATA_PAGE = 'roam/memo'
 const ARCHIVE_PAGE = 'roam-toolkit-srs/archive'
 const SRM_TAG = 'srm'
 
-interface ParsedMetadata {
+export const MIGRATION_EVENT = 'roam-date:migrate-to-memo'
+export const MIGRATION_RESULT_EVENT = 'roam-date:migrate-to-memo:done'
+
+// --- Types ---
+
+export interface ParsedMetadata {
     interval: number
     factor: number
     nextDueDate: Date | undefined
     starCount: number
+}
+
+export interface MigrationPreview {
+    found: boolean
+    alreadyMigrated: boolean
+    reviewBlockUid: string
+    metadataBlockUid: string
+    metadataIsInline: boolean
+    metadata: ParsedMetadata | null
+    memoData: {
+        grade: number
+        eFactor: number
+        interval: number
+        repetitions: number
+        nextDueDate: Date
+        reviewMode: string
+    } | null
+    strippedText: string | null
 }
 
 interface MigrationSource {
@@ -20,7 +43,20 @@ interface MigrationSource {
     metadataIsInline: boolean
 }
 
-function parseMetadataFromText(text: string): ParsedMetadata | null {
+interface ChildBlockResult {
+    uid: string
+    string: string
+    order: number
+}
+
+interface MigrationEventDetail {
+    blockUid: string
+    dryRun?: boolean
+}
+
+// --- Pure functions (exported for testing) ---
+
+export function parseMetadataFromText(text: string): ParsedMetadata | null {
     const node = new RoamNode(text)
     const intervalStr = node.getInlineProperty('interval')
     const factorStr = node.getInlineProperty('factor')
@@ -42,11 +78,34 @@ function parseMetadataFromText(text: string): ParsedMetadata | null {
     }
 }
 
-interface ChildBlockResult {
-    uid: string
-    string: string
-    order: number
+export function estimateRepetitions(interval: number, starCount: number): number {
+    if (starCount > 0) return starCount
+    if (interval <= 1) return 0
+    if (interval <= 6) return 1
+    return 2
 }
+
+export function gradeToEmoji(grade: number): string {
+    switch (grade) {
+        case 5: return '🟢'
+        case 4: return '🔵'
+        case 3: return '🟠'
+        case 0: return '🔴'
+        default: return '🔵'
+    }
+}
+
+export function stripRoamToolkitMetadata(text: string): string {
+    let result = text
+    result = result.replace(RoamNode.getInlinePropertyMatcher('interval'), '')
+    result = result.replace(RoamNode.getInlinePropertyMatcher('factor'), '')
+    result = result.replace(RoamDate.referenceRegex, '')
+    result = result.replace(/(\s*\*)+\s*$/, '')
+    result = result.replace(/\s{2,}/g, ' ').trim()
+    return result
+}
+
+// --- Roam API helpers (internal) ---
 
 function getChildBlocks(parentUid: string): ChildBlockResult[] {
     const results = window.roamAlphaAPI.q(`
@@ -89,35 +148,6 @@ function findMigrationSource(blockUid: string): MigrationSource | null {
 
     return null
 }
-
-function gradeToEmoji(grade: number): string {
-    switch (grade) {
-        case 5: return '🟢'
-        case 4: return '🔵'
-        case 3: return '🟠'
-        case 0: return '🔴'
-        default: return '🔵'
-    }
-}
-
-function estimateRepetitions(interval: number, starCount: number): number {
-    if (starCount > 0) return starCount
-    if (interval <= 1) return 0
-    if (interval <= 6) return 1
-    return 2
-}
-
-function stripRoamToolkitMetadata(text: string): string {
-    let result = text
-    result = result.replace(RoamNode.getInlinePropertyMatcher('interval'), '')
-    result = result.replace(RoamNode.getInlinePropertyMatcher('factor'), '')
-    result = result.replace(RoamDate.referenceRegex, '')
-    result = result.replace(/(\s*\*)+\s*$/, '')
-    result = result.replace(/\s{2,}/g, ' ').trim()
-    return result
-}
-
-// --- Roam API helpers ---
 
 function getPageUid(title: string): string | null {
     const results = window.roamAlphaAPI.q(
@@ -171,6 +201,59 @@ async function getOrCreateBlockOnPage(pageTitle: string, blockString: string, or
     if (existing) return existing
     const pageUid = await getOrCreatePageUid(pageTitle)
     return createChildBlock(pageUid, blockString, order, props)
+}
+
+// --- Dry-run preview ---
+
+export function previewMigration(blockUid: string): MigrationPreview {
+    const source = findMigrationSource(blockUid)
+    if (!source) {
+        return {
+            found: false,
+            alreadyMigrated: false,
+            reviewBlockUid: blockUid,
+            metadataBlockUid: '',
+            metadataIsInline: false,
+            metadata: null,
+            memoData: null,
+            strippedText: null,
+        }
+    }
+
+    const {reviewBlockUid, metadata, metadataBlockUid, metadataIsInline} = source
+    const {interval, factor, nextDueDate, starCount} = metadata
+
+    const dataBlockUid = getBlockOnPage(MEMO_DATA_PAGE, 'data')
+    const alreadyMigrated = dataBlockUid
+        ? !!getChildBlockByPrefix(dataBlockUid, `((${reviewBlockUid}))`)
+        : false
+
+    // Default to Good (4) since roam-toolkit doesn't store per-review grades
+    const grade = 4
+    const repetitions = estimateRepetitions(interval, starCount)
+    const effectiveNextDueDate = nextDueDate || new Date(Date.now() + interval * 24 * 60 * 60 * 1000)
+
+    const originalText = metadataIsInline
+        ? Block.fromUid(metadataBlockUid)?.text || ''
+        : ''
+
+    return {
+        found: true,
+        alreadyMigrated,
+        reviewBlockUid,
+        metadataBlockUid,
+        metadataIsInline,
+        metadata,
+        memoData: {
+            grade,
+            eFactor: factor,
+            interval: Math.round(interval),
+            repetitions,
+            nextDueDate: effectiveNextDueDate,
+            reviewMode: 'SPACED_INTERVAL',
+        },
+        strippedText: metadataIsInline ? stripRoamToolkitMetadata(originalText) : null,
+    }
 }
 
 // --- Core migration ---
@@ -253,4 +336,37 @@ export async function migrateCurrentBlockToMemo() {
     if (!currentBlockUid) return
     const success = await migrateBlockToMemo(currentBlockUid)
     console.log(success ? 'Migration complete' : 'No roam-toolkit metadata found or already migrated')
+}
+
+// --- Browser event listener (for cross-plugin triggering) ---
+// Other plugins can trigger migration via:
+//   document.dispatchEvent(new CustomEvent('roam-date:migrate-to-memo', { detail: { blockUid: 'xxx' } }))
+//   document.dispatchEvent(new CustomEvent('roam-date:migrate-to-memo', { detail: { blockUid: 'xxx', dryRun: true } }))
+// Results are dispatched as:
+//   'roam-date:migrate-to-memo:done' with detail { blockUid, success, preview? }
+
+function handleMigrationEvent(event: Event) {
+    const detail = (event as CustomEvent<MigrationEventDetail>).detail
+    if (!detail?.blockUid) return
+
+    if (detail.dryRun) {
+        const preview = previewMigration(detail.blockUid)
+        document.dispatchEvent(new CustomEvent(MIGRATION_RESULT_EVENT, {
+            detail: {blockUid: detail.blockUid, success: preview.found && !preview.alreadyMigrated, preview},
+        }))
+    } else {
+        void migrateBlockToMemo(detail.blockUid).then(success => {
+            document.dispatchEvent(new CustomEvent(MIGRATION_RESULT_EVENT, {
+                detail: {blockUid: detail.blockUid, success},
+            }))
+        })
+    }
+}
+
+export function setupMigrationEventListener() {
+    document.addEventListener(MIGRATION_EVENT, handleMigrationEvent)
+}
+
+export function teardownMigrationEventListener() {
+    document.removeEventListener(MIGRATION_EVENT, handleMigrationEvent)
 }
