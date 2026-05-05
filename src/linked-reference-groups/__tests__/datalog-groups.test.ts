@@ -160,7 +160,7 @@ describe('buildReferenceGroupsWithDatalog', () => {
     })
 
     it('groups bulk Datalog rows with exclusions, attribute groups, fallback, and final merge', () => {
-        mockQ.mockImplementation((query: string, values: string[], prefixes?: string[]) => {
+        mockQ.mockImplementation((query: string, values: string[], attributeName?: string, prefix?: string) => {
             if (query.includes(':in $ [?blockUid ...]') && query.includes('[?block :block/refs ?ref]')) {
                 return [
                     ['a', null],
@@ -178,13 +178,19 @@ describe('buildReferenceGroupsWithDatalog', () => {
                 throw new Error('Expected page refs to come from the cached backlink pages')
             }
 
-            if (query.includes(':in $ [?baseUid ...]') && prefixes?.includes('isa::')) {
+            if (query.includes(':in $ [?baseUid ...]') && attributeName === 'isa') {
                 expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
-                expect(prefixes).toEqual(['isa::', 'group with::'])
+                expect(prefix).toBe('isa::')
                 return [
-                    ['isa::', 'topic', 0, null],
-                    ['isa::', 'topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
+                    ['topic', 0, null],
+                    ['topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
                 ]
+            }
+
+            if (query.includes(':in $ [?baseUid ...]') && attributeName === 'group with') {
+                expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
+                expect(prefix).toBe('group with::')
+                return []
             }
 
             throw new Error(`Unexpected query: ${query}`)

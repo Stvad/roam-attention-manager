@@ -29,6 +29,7 @@ type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
 type RootBacklinkRow = [string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
+type AttributeRefWithoutNameRow = [string, number, PulledRef]
 type FilteredBacklinkData = {
     backlinkUids: string[]
     backlinkPageByUid: Map<string, RefInfo>
@@ -159,11 +160,13 @@ const PAGE_GROUP_REFS_QUERY = `
 `
 
 const ATTRIBUTE_GROUP_REFS_QUERY = `
-[:find ?prefix ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
- :in $ [?baseUid ...] [?prefix ...]
+[:find ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
+ :in $ [?baseUid ...] ?attributeName ?prefix
  :where
    [?base :block/uid ?baseUid]
    [?base :block/children ?attributeBlock]
+   [?attributePage :node/title ?attributeName]
+   [?attributeBlock :block/refs ?attributePage]
    [?attributeBlock :block/order ?order]
    [?attributeBlock :block/string ?attributeString]
    [(clojure.string/starts-with? ?attributeString ?prefix)]
@@ -551,11 +554,28 @@ const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefIn
     return new Map([...result].map(([baseUid, refsByUid]) => [baseUid, [...refsByUid.values()]]))
 }
 
+const queryAttributeRows = (
+    baseRefUids: string[],
+    metrics?: ReferenceGroupMetrics,
+): AttributeRefRow[] => measure(metrics, 'attribute refs query', () =>
+    GROUPING_ATTRIBUTE_NAMES.flatMap(attributeName =>
+        qByCollectionChunks<AttributeRefWithoutNameRow>(
+            ATTRIBUTE_GROUP_REFS_QUERY,
+            baseRefUids,
+            attributeName,
+            `${attributeName}::`,
+        ).map(([baseUid, order, pulledRef]) => [attributeName, baseUid, order, pulledRef] as AttributeRefRow),
+    ), {
+    attributes: GROUPING_ATTRIBUTE_NAMES.length,
+    baseRefs: baseRefUids.length,
+    attributeLookup: 'ref+prefix',
+})
+
 const attributeRowsByName = (rows: AttributeRefRow[]): Map<string, AttributeRefRow[]> => {
     const result = new Map<string, AttributeRefRow[]>()
 
     for (const row of rows) {
-        const attributeName = row[0].slice(0, -2)
+        const attributeName = row[0]
         const rowsForAttribute = result.get(attributeName) ?? []
         rowsForAttribute.push(row)
         result.set(attributeName, rowsForAttribute)
@@ -585,17 +605,7 @@ const addAttributeGroups = (
     const baseRefUids = [...memberUidsByBaseRefUid.keys()]
     if (!baseRefUids.length) return
 
-    const rowsByAttribute = attributeRowsByName(
-        measure(metrics, 'attribute refs query', () =>
-            qByCollectionChunks<AttributeRefRow>(
-                ATTRIBUTE_GROUP_REFS_QUERY,
-                baseRefUids,
-                GROUPING_ATTRIBUTE_NAMES.map(attributeName => `${attributeName}::`),
-            ), {
-            attributes: GROUPING_ATTRIBUTE_NAMES.length,
-            baseRefs: baseRefUids.length,
-        }),
-    )
+    const rowsByAttribute = attributeRowsByName(queryAttributeRows(baseRefUids, metrics))
 
     for (const attributeName of GROUPING_ATTRIBUTE_NAMES) {
         const rows = rowsByAttribute.get(attributeName) ?? []
