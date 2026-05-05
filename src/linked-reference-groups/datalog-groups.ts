@@ -1,10 +1,9 @@
-import {RoamEntity} from 'roam-api-wrappers/dist/data'
 import {
     CommonReferencesGrouper,
     combineRegexes,
-    mergeGroupsSmallerThan,
 } from 'roam-api-wrappers/dist/data/collection'
 import type {ReferenceGroupMap} from 'roam-api-wrappers/dist/data/collection'
+import type {RoamEntity} from 'roam-api-wrappers/dist/data'
 import type {ReferenceFilter} from 'roam-api-wrappers/dist/data/types'
 
 const GROUPING_ATTRIBUTE_NAMES = ['isa', 'group with']
@@ -28,10 +27,12 @@ type RefInfo = {
 type RefRow = [string, PulledRef]
 type AttributeRefRow = [string, number, PulledRef]
 
+export type GroupedEntity = Pick<RoamEntity, 'uid'>
+
 export type RenderedReferenceGroup = {
     uid: string
     title: string
-    entities: RoamEntity[]
+    entities: GroupedEntity[]
 }
 
 type BuildReferenceGroupsOptions = {
@@ -183,10 +184,10 @@ export const getFilteredBacklinkUids = (rootUid: string, filter: ReferenceFilter
 }
 
 const addMemberToGroup = (
-    referenceGroups: ReferenceGroupMap,
+    referenceGroups: LightweightReferenceGroupMap,
     groupTextByUid: Map<string, string>,
     group: RefInfo,
-    member: RoamEntity,
+    member: GroupedEntity,
 ) => {
     const existingGroup = referenceGroups.get(group.uid)
     groupTextByUid.set(group.uid, group.text)
@@ -200,6 +201,31 @@ const addMemberToGroup = (
         text: group.text,
         members: new Map([[member.uid, member]]),
     })
+}
+
+type LightweightReferenceGroupMap = Map<string, {
+    text: string
+    members: Map<string, GroupedEntity>
+}>
+
+const mergeGroupsSmallerThan = (
+    referenceGroups: Map<string, GroupedEntity[]>,
+    intoKey: string,
+    minGroupSize: number,
+    dontMerge: (uid: string) => boolean,
+) => {
+    const large: [string, GroupedEntity[]][] = []
+    const mergedItems: GroupedEntity[] = []
+
+    for (const [key, group] of referenceGroups) {
+        if (!dontMerge(key) && (group.length < minGroupSize || key === intoKey)) {
+            mergedItems.push(...group)
+        } else {
+            large.push([key, group])
+        }
+    }
+
+    return new Map([...large, [intoKey, mergedItems]])
 }
 
 const queryBaseGroupRows = (backlinkUids: string[]): RefRow[] => [
@@ -332,16 +358,14 @@ export const buildReferenceGroupsWithDatalog = ({
     lowPriorityPages,
     smallestGroupSize,
 }: BuildReferenceGroupsOptions): RenderedReferenceGroup[] => {
-    const referenceGroups: ReferenceGroupMap = new Map()
+    const referenceGroups: LightweightReferenceGroupMap = new Map()
     const groupTextByUid = new Map<string, string>([[rootUid, rootText]])
     const combinedExclusion = combineRegexes(dontGroupReferencesTo)
     const notExcluded = (group: RefInfo) => !combinedExclusion?.test(group.text)
 
-    const memberByUid = new Map<string, RoamEntity>()
-    backlinkUids.forEach(uid => {
-        const entity = RoamEntity.fromUid(uid)
-        if (entity) memberByUid.set(entity.uid, entity)
-    })
+    const memberByUid = new Map<string, GroupedEntity>(
+        unique(backlinkUids).map(uid => [uid, {uid}]),
+    )
     const baseRefsByMemberUid = new Map<string, Map<string, RefInfo>>()
     const memberUidsWithGroups = new Set<string>()
 
@@ -385,7 +409,7 @@ export const buildReferenceGroupsWithDatalog = ({
             low: lowPriorityPages,
             high: highPriorityPages,
         },
-    ).deduplicateAndSortGroups(referenceGroups)
+    ).deduplicateAndSortGroups(referenceGroups as unknown as ReferenceGroupMap) as unknown as Map<string, GroupedEntity[]>
 
     const mergedGroups = mergeGroupsSmallerThan(
         grouped,

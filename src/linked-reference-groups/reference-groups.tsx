@@ -21,12 +21,12 @@ import {
     buildReferenceGroupsWithDatalog,
     getFilteredBacklinkUids,
 } from './datalog-groups'
-import type {RenderedReferenceGroup} from './datalog-groups'
+import type {GroupedEntity, RenderedReferenceGroup} from './datalog-groups'
 
 interface ReferenceGroupProps {
     uid: string
     title: string
-    entities: RoamEntity[]
+    entities: GroupedEntity[]
     rootPageUid: string
 }
 
@@ -103,8 +103,14 @@ const NextDayWithThisGroupButton = ({entities}: { entities: () => RoamEntity[] }
 }
 
 // Refreshing the entities from db to get latest data vs in-memory cache
-const refreshEntities = (entities: RoamEntity[]) =>
-  entities.map(it => RoamEntity.fromUid(it.uid)!)
+const refreshEntities = (entities: GroupedEntity[]) => {
+    const refreshed: RoamEntity[] = []
+    entities.forEach(entity => {
+        const current = RoamEntity.fromUid(entity.uid)
+        if (current) refreshed.push(current)
+    })
+    return refreshed
+}
 
 function ReferenceGroup({uid, title, entities, rootPageUid}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()

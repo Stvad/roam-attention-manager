@@ -1,25 +1,8 @@
-const mockFromUid = jest.fn()
-
 jest.mock('roam-api-wrappers/dist/date', () => ({
     RoamDate: {
         onlyPageTitleRegex: /^January \d{1,2}(?:st|nd|rd|th), \d{4}$/,
     },
 }))
-
-jest.mock('roam-api-wrappers/dist/data', () => {
-    class MockRoamEntity {
-        static fromUid(...args: unknown[]) {
-            return mockFromUid(...args)
-        }
-    }
-
-    class MockPage extends MockRoamEntity {}
-
-    return {
-        RoamEntity: MockRoamEntity,
-        Page: MockPage,
-    }
-})
 
 jest.mock('roam-api-wrappers/dist/data/collection', () => {
     const combineRegexes = (regexes: RegExp[]) =>
@@ -136,16 +119,9 @@ describe('getFilteredBacklinkUids', () => {
 
 describe('buildReferenceGroupsWithDatalog', () => {
     const mockQ = jest.fn()
-    const entities: Record<string, {uid: string; text: string}> = {
-        a: {uid: 'a', text: 'A'},
-        b: {uid: 'b', text: 'B'},
-        c: {uid: 'c', text: 'C'},
-    }
 
     beforeEach(() => {
         mockQ.mockReset()
-        mockFromUid.mockReset()
-        mockFromUid.mockImplementation((uid: string) => entities[uid] ?? null)
         ;(globalThis as Record<string, unknown>).window = {
             roamAlphaAPI: {q: mockQ},
         }
@@ -203,12 +179,12 @@ describe('buildReferenceGroupsWithDatalog', () => {
             {
                 uid: 'project',
                 title: 'Project',
-                entities: [entities.a, entities.b],
+                entities: [{uid: 'a'}, {uid: 'b'}],
             },
             {
                 uid: 'root',
                 title: 'Root',
-                entities: [entities.c],
+                entities: [{uid: 'c'}],
             },
         ])
     })
