@@ -33,7 +33,7 @@ type RefInfo = {
 
 type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
-type RootBacklinkRow = [string, PulledRef]
+type RootBacklinkRow = [string, string, string]
 type AttributeRefRow = [string, string, number, PulledRef]
 type AttributeBaseRow = [string, PulledRef]
 type FilteredBacklinkData = {
@@ -103,13 +103,15 @@ const toRefInfo = (ref: PulledRef): RefInfo | null => {
 }
 
 const ROOT_BACKLINK_UIDS_QUERY = `
-[:find ?uid (pull ?page [:block/uid :node/title])
+[:find ?uid ?pageUid ?pageTitle
  :in $ ?rootUid
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
    [?block :block/uid ?uid]
-   [?block :block/page ?page]]
+   [?block :block/page ?page]
+   [?page :block/uid ?pageUid]
+   [?page :node/title ?pageTitle]]
 `
 
 const DIRECT_FILTER_REF_QUERY = `
@@ -167,6 +169,20 @@ const COMBINED_GROUP_REFS_QUERY = `
 [:find ?blockUid (pull ?ref [:block/uid :node/title :block/string])
  :in $ [?blockUid ...]
  :where
+   [?block :block/uid ?blockUid]
+   (or-join [?block ?ref]
+     [?block :block/refs ?ref]
+     (and
+       [?block :block/parents ?parent]
+       [?parent :block/refs ?ref]))]
+`
+
+const ROOT_COMBINED_GROUP_REFS_QUERY = `
+[:find ?blockUid (pull ?ref [:block/uid :node/title :block/string])
+ :in $ ?rootUid
+ :where
+   [?root :block/uid ?rootUid]
+   [?block :block/refs ?root]
    [?block :block/uid ?blockUid]
    (or-join [?block ?ref]
      [?block :block/refs ?ref]
@@ -337,9 +353,10 @@ const queryRootBacklinks = (
         q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
     const backlinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
     const backlinkPageByUid = new Map<string, RefInfo>()
-    rootBacklinkRows.forEach(([uid, pulledPage]) => {
-        const page = toRefInfo(pulledPage)
-        if (page) backlinkPageByUid.set(uid, page)
+    rootBacklinkRows.forEach(([uid, pageUid, pageTitle]) => {
+        if (pageUid && pageTitle) {
+            backlinkPageByUid.set(uid, {uid: pageUid, text: pageTitle, isPage: true})
+        }
     })
 
     return {
@@ -425,7 +442,8 @@ export const getFilteredBacklinksWithBaseRefs = (
         return filterBacklinks(rootUid, backlinks, filter, metrics)
     }
 
-    const baseGroupRows = queryBaseGroupRows(backlinks.backlinkUids, metrics, false)
+    const baseGroupRows = queryRootBaseGroupRows(rootUid, metrics) ??
+        queryBaseGroupRows(backlinks.backlinkUids, metrics, false)
     return filterBacklinks(rootUid, {
         ...backlinks,
         baseGroupRows,
@@ -478,6 +496,7 @@ const mergeGroupsSmallerThan = (
 }
 
 let useCombinedGroupRefsQuery = true
+let useRootCombinedGroupRefsQuery = true
 
 const queryPageGroupRows = (
     backlinkUids: string[],
@@ -505,6 +524,33 @@ const querySeparateBaseGroupRows = (
     })
 
     return [...directRows, ...parentRows, ...pageRows]
+}
+
+const queryRootBaseGroupRows = (
+    rootUid: string,
+    metrics?: ReferenceGroupMetrics,
+): RefRow[] | null => {
+    if (!useRootCombinedGroupRefsQuery) return null
+
+    try {
+        const groupRows = measure(metrics, 'group root combined refs query', () =>
+            q<RefRow>(ROOT_COMBINED_GROUP_REFS_QUERY, rootUid), {rootUid})
+
+        metrics?.mark('base ref rows', {
+            groupRows: groupRows.length,
+            pageRows: 0,
+            groupRowsSource: 'root combined query',
+            pageRowsSource: 'root backlink query',
+        })
+
+        return groupRows
+    } catch (error) {
+        useRootCombinedGroupRefsQuery = false
+        const message = error instanceof Error ? error.message : String(error)
+        metrics?.mark('group root combined refs query failed', {message})
+        console.warn('[roam-date reference groups] root combined group refs query failed; falling back to uid query', error)
+        return null
+    }
 }
 
 const queryBaseGroupRows = (

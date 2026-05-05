@@ -101,9 +101,9 @@ describe('getFilteredBacklinkUids', () => {
     it('intersects include filters and subtracts remove filters using Datalog result sets', () => {
         mockQ
             .mockReturnValueOnce([
-                ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
-                ['b', {':block/uid': 'page-b', ':node/title': 'Drop'}],
-                ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
+                ['a', 'page-a', 'Page A'],
+                ['b', 'page-b', 'Drop'],
+                ['c', 'page-c', 'Page C'],
             ])
             .mockReturnValueOnce([['Keep', 'a']])
             .mockReturnValueOnce([['Keep', 'b']])
@@ -121,9 +121,9 @@ describe('getFilteredBacklinkUids', () => {
         const keepRef = {':block/uid': 'keep', ':node/title': 'Keep'}
         mockQ
             .mockReturnValueOnce([
-                ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
-                ['b', {':block/uid': 'page-b', ':node/title': 'Drop'}],
-                ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
+                ['a', 'page-a', 'Page A'],
+                ['b', 'page-b', 'Drop'],
+                ['c', 'page-c', 'Page C'],
             ])
             .mockReturnValueOnce([
                 ['a', keepRef],
@@ -159,7 +159,7 @@ describe('buildReferenceGroupsWithDatalog', () => {
 
     it('groups bulk Datalog rows with exclusions, attribute groups, fallback, and final merge', () => {
         mockQ.mockImplementation((query: string, values: string[], prefixes?: string[]) => {
-            if (query.includes(':in $ [?blockUid ...]') && query.includes('(or-join [?block ?ref]')) {
+            if (query.includes('(or-join [?block ?ref]')) {
                 return [
                     ['a', null],
                     ['a', {':block/uid': 'topic', ':node/title': 'Topic'}],
