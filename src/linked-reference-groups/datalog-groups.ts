@@ -27,6 +27,7 @@ type RefInfo = {
 
 type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
+type RootBacklinkRow = [string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
 
 export type GroupedEntity = Pick<RoamEntity, 'uid'>
@@ -41,6 +42,7 @@ type BuildReferenceGroupsOptions = {
     rootUid: string
     rootText: string
     backlinkUids: string[]
+    backlinkPageByUid?: Map<string, RefInfo>
     dontGroupReferencesTo: RegExp[]
     highPriorityPages: RegExp[]
     lowPriorityPages: RegExp[]
@@ -82,12 +84,13 @@ const toRefInfo = (ref: PulledRef): RefInfo | null => {
 }
 
 const ROOT_BACKLINK_UIDS_QUERY = `
-[:find ?uid
+[:find ?uid (pull ?page [:block/uid :node/title :block/string])
  :in $ ?rootUid
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
-   [?block :block/uid ?uid]]
+   [?block :block/uid ?uid]
+   [?block :block/page ?page]]
 `
 
 const DIRECT_FILTER_REF_QUERY = `
@@ -234,23 +237,46 @@ export const getFilteredBacklinkUids = (
     filter: ReferenceFilter,
     metrics?: ReferenceGroupMetrics,
 ): string[] => {
-    const allBacklinkUids = measure(metrics, 'root backlink uid query', () =>
-        unique(q<[string]>(ROOT_BACKLINK_UIDS_QUERY, rootUid).map(([uid]) => uid)))
+    return getFilteredBacklinks(rootUid, filter, metrics).backlinkUids
+}
+
+export const getFilteredBacklinks = (
+    rootUid: string,
+    filter: ReferenceFilter,
+    metrics?: ReferenceGroupMetrics,
+): {
+    backlinkUids: string[]
+    backlinkPageByUid: Map<string, RefInfo>
+} => {
+    const rootBacklinkRows = measure(metrics, 'root backlink uid query', () =>
+        q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
+    const allBacklinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
+    const pageByUid = new Map<string, RefInfo>()
+    rootBacklinkRows.forEach(([uid, pulledPage]) => {
+        const page = toRefInfo(pulledPage)
+        if (page) pageByUid.set(uid, page)
+    })
 
     metrics?.mark('reference filters', {
         backlinks: allBacklinkUids.length,
+        pages: pageByUid.size,
         includes: filter.includes.length,
         removes: filter.removes.length,
     })
 
-    if (!filter.includes.length && !filter.removes.length) return allBacklinkUids
+    if (!filter.includes.length && !filter.removes.length) {
+        return {
+            backlinkUids: allBacklinkUids,
+            backlinkPageByUid: pageByUid,
+        }
+    }
 
     const filterTitles = unique([...filter.includes, ...filter.removes])
     const matchesByTitle = visibleRefUidsByFilterTitle(rootUid, filterTitles, metrics)
     const includeMatches = filter.includes.map(title => matchesByTitle.get(title) ?? new Set<string>())
     const removeMatches = filter.removes.map(title => matchesByTitle.get(title) ?? new Set<string>())
 
-    return measure(metrics, 'apply filter sets', () =>
+    const filteredBacklinkUids = measure(metrics, 'apply filter sets', () =>
         allBacklinkUids.filter(uid =>
             includeMatches.every(matches => matches.has(uid)) &&
             removeMatches.every(matches => !matches.has(uid))), {
@@ -258,6 +284,13 @@ export const getFilteredBacklinkUids = (
         includes: includeMatches.length,
         removes: removeMatches.length,
     })
+
+    return {
+        backlinkUids: filteredBacklinkUids,
+        backlinkPageByUid: new Map(filteredBacklinkUids
+            .map(uid => [uid, pageByUid.get(uid)] as const)
+            .filter((entry): entry is readonly [string, RefInfo] => Boolean(entry[1]))),
+    }
 }
 
 const addMemberToGroup = (
@@ -305,18 +338,25 @@ const mergeGroupsSmallerThan = (
     return new Map([...large, [intoKey, mergedItems]])
 }
 
-const queryBaseGroupRows = (backlinkUids: string[], metrics?: ReferenceGroupMetrics): RefRow[] => {
+const queryBaseGroupRows = (
+    backlinkUids: string[],
+    metrics?: ReferenceGroupMetrics,
+    includePageRefs: boolean = true,
+): RefRow[] => {
     const directRows = measure(metrics, 'group direct refs query', () =>
         qByCollectionChunks<RefRow>(DIRECT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
     const parentRows = measure(metrics, 'group parent refs query', () =>
         qByCollectionChunks<RefRow>(PARENT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
-    const pageRows = measure(metrics, 'group page refs query', () =>
-        qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+    const pageRows = includePageRefs
+        ? measure(metrics, 'group page refs query', () =>
+            qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+        : []
 
     metrics?.mark('base ref rows', {
         directRows: directRows.length,
         parentRows: parentRows.length,
         pageRows: pageRows.length,
+        pageRowsSource: includePageRefs ? 'query' : 'root backlink query',
     })
 
     return [...directRows, ...parentRows, ...pageRows]
@@ -479,6 +519,7 @@ export const buildReferenceGroupsWithDatalog = ({
     rootUid,
     rootText,
     backlinkUids,
+    backlinkPageByUid,
     dontGroupReferencesTo,
     highPriorityPages,
     lowPriorityPages,
@@ -505,30 +546,50 @@ export const buildReferenceGroupsWithDatalog = ({
         addMemberToGroup(referenceGroups, groupTextByUid, group, member)
     }
 
+    const addBaseRefForMember = (memberUid: string, ref: RefInfo) => {
+        if (notExcluded(ref)) {
+            let baseRefsByUid = baseRefsByMemberUid.get(memberUid)
+            if (!baseRefsByUid) {
+                baseRefsByUid = new Map()
+                baseRefsByMemberUid.set(memberUid, baseRefsByUid)
+            }
+            baseRefsByUid.set(ref.uid, ref)
+        }
+
+        addGroupForMember(memberUid, ref)
+    }
+
     measure(metrics, 'build base reference groups', () => {
         let skippedPulledRefs = 0
-        for (const [memberUid, pulledRef] of queryBaseGroupRows([...memberByUid.keys()], metrics)) {
+        let cachedPageRefs = 0
+
+        for (const [memberUid, pulledRef] of queryBaseGroupRows(
+            [...memberByUid.keys()],
+            metrics,
+            backlinkPageByUid === undefined,
+        )) {
             const ref = toRefInfo(pulledRef)
             if (!ref) {
                 skippedPulledRefs += 1
                 continue
             }
 
-            if (notExcluded(ref)) {
-                let baseRefsByUid = baseRefsByMemberUid.get(memberUid)
-                if (!baseRefsByUid) {
-                    baseRefsByUid = new Map()
-                    baseRefsByMemberUid.set(memberUid, baseRefsByUid)
-                }
-                baseRefsByUid.set(ref.uid, ref)
-            }
+            addBaseRefForMember(memberUid, ref)
+        }
 
-            addGroupForMember(memberUid, ref)
+        if (backlinkPageByUid) {
+            for (const [memberUid, page] of backlinkPageByUid) {
+                if (!memberByUid.has(memberUid)) continue
+
+                cachedPageRefs += 1
+                addBaseRefForMember(memberUid, page)
+            }
         }
 
         metrics?.mark('base reference groups built', {
             groups: referenceGroups.size,
             membersWithBaseRefs: baseRefsByMemberUid.size,
+            cachedPageRefs,
             skippedPulledRefs,
         })
     })

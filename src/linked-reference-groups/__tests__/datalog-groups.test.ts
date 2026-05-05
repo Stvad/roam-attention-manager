@@ -99,7 +99,11 @@ describe('getFilteredBacklinkUids', () => {
 
     it('intersects include filters and subtracts remove filters using Datalog result sets', () => {
         mockQ
-            .mockReturnValueOnce([['a'], ['b'], ['c']])
+            .mockReturnValueOnce([
+                ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
+                ['b', {':block/uid': 'page-b', ':node/title': 'Page B'}],
+                ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
+            ])
             .mockReturnValueOnce([['Keep', 'a']])
             .mockReturnValueOnce([['Keep', 'b']])
             .mockReturnValueOnce([['Drop', 'b']])
@@ -144,11 +148,11 @@ describe('buildReferenceGroupsWithDatalog', () => {
             }
 
             if (query.includes(':in $ [?blockUid ...]') && query.includes('[?block :block/page ?page]')) {
-                return []
+                throw new Error('Expected page refs to come from the cached backlink pages')
             }
 
             if (query.includes(':in $ [?baseUid ...]') && prefixes?.includes('isa::')) {
-                expect(values).toEqual(['topic'])
+                expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
                 expect(prefixes).toEqual(['isa::', 'group with::'])
                 return [
                     ['isa::', 'topic', 0, null],
@@ -163,6 +167,11 @@ describe('buildReferenceGroupsWithDatalog', () => {
             rootUid: 'root',
             rootText: 'Root',
             backlinkUids: ['a', 'b', 'c'],
+            backlinkPageByUid: new Map([
+                ['a', {uid: 'page-a', text: 'Page A', isPage: true}],
+                ['b', {uid: 'page-b', text: 'Page B', isPage: true}],
+                ['c', {uid: 'page-c', text: 'Page C', isPage: true}],
+            ]),
             dontGroupReferencesTo: [/^TODO$/],
             highPriorityPages: [/^Project$/],
             lowPriorityPages: [],

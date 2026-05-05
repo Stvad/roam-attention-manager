@@ -19,7 +19,7 @@ import {RoamDate} from 'roam-api-wrappers/dist/date'
 import {migrateBlockToMemo, showMigrationToast} from '../srs/migrate-to-memo'
 import {
     buildReferenceGroupsWithDatalog,
-    getFilteredBacklinkUids,
+    getFilteredBacklinks,
 } from './datalog-groups'
 import type {GroupedEntity, RenderedReferenceGroup} from './datalog-groups'
 import {
@@ -253,7 +253,7 @@ export function ReferenceGroups(
             return
         }
 
-        const backlinkUids = getFilteredBacklinkUids(entityUid, entity.referenceFilter, metrics)
+        const {backlinkUids, backlinkPageByUid} = getFilteredBacklinks(entityUid, entity.referenceFilter, metrics)
         // todo this is ugly?
         if (backlinkUids.length > dontGroupThreshold && !refresh) {
             console.warn(`Too many backlinks (${backlinkUids.length}) for ${entityUid} - skipping initial render.
@@ -269,6 +269,7 @@ export function ReferenceGroups(
             rootUid: entityUid,
             rootText: entity.text,
             backlinkUids,
+            backlinkPageByUid,
             highPriorityPages,
             lowPriorityPages,
             smallestGroupSize,
