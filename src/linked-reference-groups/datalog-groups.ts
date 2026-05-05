@@ -33,7 +33,9 @@ type RefInfo = {
 
 type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
-type RootBacklinkRow = [string, string, string]
+type CountRow = [number]
+type RootBacklinkRow = [string, PulledRef]
+type RootBacklinkBaseRefRow = [string, string, string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
 type AttributeBaseRow = [string, PulledRef]
 type FilteredBacklinkData = {
@@ -103,15 +105,21 @@ const toRefInfo = (ref: PulledRef): RefInfo | null => {
 }
 
 const ROOT_BACKLINK_UIDS_QUERY = `
-[:find ?uid ?pageUid ?pageTitle
+[:find ?uid (pull ?page [:block/uid :node/title])
  :in $ ?rootUid
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
    [?block :block/uid ?uid]
-   [?block :block/page ?page]
-   [?page :block/uid ?pageUid]
-   [?page :node/title ?pageTitle]]
+   [?block :block/page ?page]]
+`
+
+const ROOT_BACKLINK_COUNT_QUERY = `
+[:find (count ?block)
+ :in $ ?rootUid
+ :where
+   [?root :block/uid ?rootUid]
+   [?block :block/refs ?root]]
 `
 
 const DIRECT_FILTER_REF_QUERY = `
@@ -184,6 +192,23 @@ const ROOT_COMBINED_GROUP_REFS_QUERY = `
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
    [?block :block/uid ?blockUid]
+   (or-join [?block ?ref]
+     [?block :block/refs ?ref]
+     (and
+       [?block :block/parents ?parent]
+       [?parent :block/refs ?ref]))]
+`
+
+const ROOT_BACKLINK_BASE_REFS_QUERY = `
+[:find ?blockUid ?pageUid ?pageTitle (pull ?ref [:block/uid :node/title :block/string])
+ :in $ ?rootUid
+ :where
+   [?root :block/uid ?rootUid]
+   [?block :block/refs ?root]
+   [?block :block/uid ?blockUid]
+   [?block :block/page ?page]
+   [?page :block/uid ?pageUid]
+   [?page :node/title ?pageTitle]
    (or-join [?block ?ref]
      [?block :block/refs ?ref]
      (and
@@ -345,15 +370,11 @@ const visibleRefUidsByCachedBaseRows = (
     return result
 }
 
-const queryRootBacklinks = (
-    rootUid: string,
-    metrics?: ReferenceGroupMetrics,
-): FilteredBacklinkData => {
-    const rootBacklinkRows = measure(metrics, 'root backlink uid query', () =>
-        q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
-    const backlinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
+const buildBacklinksFromBaseRows = (rows: RootBacklinkBaseRefRow[]): FilteredBacklinkData => {
+    const backlinkUids = unique(rows.map(([uid]) => uid))
     const backlinkPageByUid = new Map<string, RefInfo>()
-    rootBacklinkRows.forEach(([uid, pageUid, pageTitle]) => {
+
+    rows.forEach(([uid, pageUid, pageTitle]) => {
         if (pageUid && pageTitle) {
             backlinkPageByUid.set(uid, {uid: pageUid, text: pageTitle, isPage: true})
         }
@@ -362,7 +383,67 @@ const queryRootBacklinks = (
     return {
         backlinkUids,
         backlinkPageByUid,
+        baseGroupRows: rows.map(([uid, , , pulledRef]) => [uid, pulledRef] as RefRow),
     }
+}
+
+const queryRootBacklinks = (
+    rootUid: string,
+    metrics?: ReferenceGroupMetrics,
+): FilteredBacklinkData => {
+    const rootBacklinkRows = measure(metrics, 'root backlink uid query', () =>
+        q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
+    const backlinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
+    const backlinkPageByUid = new Map<string, RefInfo>()
+    rootBacklinkRows.forEach(([uid, pulledPage]) => {
+        const page = toRefInfo(pulledPage)
+        if (page) backlinkPageByUid.set(uid, page)
+    })
+
+    return {
+        backlinkUids,
+        backlinkPageByUid,
+    }
+}
+
+const queryRootBacklinkCount = (
+    rootUid: string,
+    metrics?: ReferenceGroupMetrics,
+): number => measure(metrics, 'root backlink count query', () =>
+    q<CountRow>(ROOT_BACKLINK_COUNT_QUERY, rootUid)[0]?.[0] ?? 0, {rootUid})
+
+const queryRootBacklinksWithBaseRefs = (
+    rootUid: string,
+    expectedBacklinks: number,
+    metrics?: ReferenceGroupMetrics,
+): FilteredBacklinkData | null => {
+    const rows = measure(metrics, 'root backlink base refs query', () =>
+        q<RootBacklinkBaseRefRow>(ROOT_BACKLINK_BASE_REFS_QUERY, rootUid), {rootUid})
+    const backlinks = buildBacklinksFromBaseRows(rows)
+
+    metrics?.mark('root backlink base refs result', {
+        backlinks: backlinks.backlinkUids.length,
+        expectedBacklinks,
+        pages: backlinks.backlinkPageByUid.size,
+        baseRows: backlinks.baseGroupRows?.length ?? 0,
+    })
+
+    if (backlinks.backlinkUids.length !== expectedBacklinks) {
+        metrics?.mark('root backlink base refs mismatch', {
+            backlinks: backlinks.backlinkUids.length,
+            expectedBacklinks,
+        })
+        return null
+    }
+
+    metrics?.mark('base ref rows', {
+        groupRows: backlinks.baseGroupRows?.length ?? 0,
+        pageRows: 0,
+        groupRowsSource: 'root backlink base refs query',
+        pageRowsSource: 'root backlink base refs query',
+    })
+
+    return backlinks
 }
 
 const filterBacklinks = (
@@ -433,15 +514,22 @@ export const getFilteredBacklinksWithBaseRefs = (
     metrics?: ReferenceGroupMetrics,
     maxPrefetchBacklinks: number = Number.POSITIVE_INFINITY,
 ): FilteredBacklinkData => {
-    const backlinks = queryRootBacklinks(rootUid, metrics)
-    if (backlinks.backlinkUids.length > maxPrefetchBacklinks) {
+    const backlinkCount = queryRootBacklinkCount(rootUid, metrics)
+    if (backlinkCount > maxPrefetchBacklinks) {
         metrics?.mark('base refs prefetch skipped', {
-            backlinks: backlinks.backlinkUids.length,
+            backlinks: backlinkCount,
             maxPrefetchBacklinks,
         })
+        const backlinks = queryRootBacklinks(rootUid, metrics)
         return filterBacklinks(rootUid, backlinks, filter, metrics)
     }
 
+    const prefetchedBacklinks = queryRootBacklinksWithBaseRefs(rootUid, backlinkCount, metrics)
+    if (prefetchedBacklinks) {
+        return filterBacklinks(rootUid, prefetchedBacklinks, filter, metrics)
+    }
+
+    const backlinks = queryRootBacklinks(rootUid, metrics)
     const baseGroupRows = queryRootBaseGroupRows(rootUid, metrics) ??
         queryBaseGroupRows(backlinks.backlinkUids, metrics, false)
     return filterBacklinks(rootUid, {

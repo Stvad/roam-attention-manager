@@ -101,9 +101,9 @@ describe('getFilteredBacklinkUids', () => {
     it('intersects include filters and subtracts remove filters using Datalog result sets', () => {
         mockQ
             .mockReturnValueOnce([
-                ['a', 'page-a', 'Page A'],
-                ['b', 'page-b', 'Drop'],
-                ['c', 'page-c', 'Page C'],
+                ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
+                ['b', {':block/uid': 'page-b', ':node/title': 'Drop'}],
+                ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
             ])
             .mockReturnValueOnce([['Keep', 'a']])
             .mockReturnValueOnce([['Keep', 'b']])
@@ -120,15 +120,11 @@ describe('getFilteredBacklinkUids', () => {
     it('reuses prefetched base refs to apply filters without extra filter queries', () => {
         const keepRef = {':block/uid': 'keep', ':node/title': 'Keep'}
         mockQ
+            .mockReturnValueOnce([[3]])
             .mockReturnValueOnce([
-                ['a', 'page-a', 'Page A'],
-                ['b', 'page-b', 'Drop'],
-                ['c', 'page-c', 'Page C'],
-            ])
-            .mockReturnValueOnce([
-                ['a', keepRef],
-                ['b', keepRef],
-                ['c', {':block/uid': 'todo', ':node/title': 'TODO'}],
+                ['a', 'page-a', 'Page A', keepRef],
+                ['b', 'page-b', 'Drop', keepRef],
+                ['c', 'page-c', 'Page C', {':block/uid': 'todo', ':node/title': 'TODO'}],
             ])
 
         const result = getFilteredBacklinksWithBaseRefs('root', {
