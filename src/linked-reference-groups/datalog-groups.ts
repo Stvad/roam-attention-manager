@@ -29,7 +29,6 @@ type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
 type RootBacklinkRow = [string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
-type AttributeRefWithoutNameRow = [string, number, PulledRef]
 type FilteredBacklinkData = {
     backlinkUids: string[]
     backlinkPageByUid: Map<string, RefInfo>
@@ -151,6 +150,18 @@ const PARENT_GROUP_REFS_QUERY = `
    [?parent :block/refs ?ref]]
 `
 
+const COMBINED_GROUP_REFS_QUERY = `
+[:find ?blockUid (pull ?ref [:block/uid :node/title :block/string])
+ :in $ [?blockUid ...]
+ :where
+   [?block :block/uid ?blockUid]
+   (or-join [?block ?ref]
+     [?block :block/refs ?ref]
+     (and
+       [?block :block/parents ?parent]
+       [?parent :block/refs ?ref]))]
+`
+
 const PAGE_GROUP_REFS_QUERY = `
 [:find ?blockUid (pull ?page [:block/uid :node/title])
  :in $ [?blockUid ...]
@@ -160,13 +171,11 @@ const PAGE_GROUP_REFS_QUERY = `
 `
 
 const ATTRIBUTE_GROUP_REFS_QUERY = `
-[:find ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
- :in $ [?baseUid ...] ?attributeName ?prefix
+[:find ?prefix ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
+ :in $ [?baseUid ...] [?prefix ...]
  :where
    [?base :block/uid ?baseUid]
    [?base :block/children ?attributeBlock]
-   [?attributePage :node/title ?attributeName]
-   [?attributeBlock :block/refs ?attributePage]
    [?attributeBlock :block/order ?order]
    [?attributeBlock :block/string ?attributeString]
    [(clojure.string/starts-with? ?attributeString ?prefix)]
@@ -446,7 +455,15 @@ const mergeGroupsSmallerThan = (
     return new Map([...large, [intoKey, mergedItems]])
 }
 
-const queryBaseGroupRows = (
+let useCombinedGroupRefsQuery = true
+
+const queryPageGroupRows = (
+    backlinkUids: string[],
+    metrics?: ReferenceGroupMetrics,
+): RefRow[] => measure(metrics, 'group page refs query', () =>
+    qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+
+const querySeparateBaseGroupRows = (
     backlinkUids: string[],
     metrics?: ReferenceGroupMetrics,
     includePageRefs: boolean = true,
@@ -455,19 +472,48 @@ const queryBaseGroupRows = (
         qByCollectionChunks<RefRow>(DIRECT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
     const parentRows = measure(metrics, 'group parent refs query', () =>
         qByCollectionChunks<RefRow>(PARENT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
-    const pageRows = includePageRefs
-        ? measure(metrics, 'group page refs query', () =>
-            qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
-        : []
+    const pageRows = includePageRefs ? queryPageGroupRows(backlinkUids, metrics) : []
 
     metrics?.mark('base ref rows', {
         directRows: directRows.length,
         parentRows: parentRows.length,
         pageRows: pageRows.length,
+        groupRowsSource: 'separate queries',
         pageRowsSource: includePageRefs ? 'query' : 'root backlink query',
     })
 
     return [...directRows, ...parentRows, ...pageRows]
+}
+
+const queryBaseGroupRows = (
+    backlinkUids: string[],
+    metrics?: ReferenceGroupMetrics,
+    includePageRefs: boolean = true,
+): RefRow[] => {
+    if (!useCombinedGroupRefsQuery) {
+        return querySeparateBaseGroupRows(backlinkUids, metrics, includePageRefs)
+    }
+
+    try {
+        const groupRows = measure(metrics, 'group combined refs query', () =>
+            qByCollectionChunks<RefRow>(COMBINED_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+        const pageRows = includePageRefs ? queryPageGroupRows(backlinkUids, metrics) : []
+
+        metrics?.mark('base ref rows', {
+            groupRows: groupRows.length,
+            pageRows: pageRows.length,
+            groupRowsSource: 'combined query',
+            pageRowsSource: includePageRefs ? 'query' : 'root backlink query',
+        })
+
+        return [...groupRows, ...pageRows]
+    } catch (error) {
+        useCombinedGroupRefsQuery = false
+        const message = error instanceof Error ? error.message : String(error)
+        metrics?.mark('group combined refs query failed', {message})
+        console.warn('[roam-date reference groups] combined group refs query failed; falling back to separate queries', error)
+        return querySeparateBaseGroupRows(backlinkUids, metrics, includePageRefs)
+    }
 }
 
 const addHierarchyGroups = (
@@ -558,24 +604,21 @@ const queryAttributeRows = (
     baseRefUids: string[],
     metrics?: ReferenceGroupMetrics,
 ): AttributeRefRow[] => measure(metrics, 'attribute refs query', () =>
-    GROUPING_ATTRIBUTE_NAMES.flatMap(attributeName =>
-        qByCollectionChunks<AttributeRefWithoutNameRow>(
-            ATTRIBUTE_GROUP_REFS_QUERY,
-            baseRefUids,
-            attributeName,
-            `${attributeName}::`,
-        ).map(([baseUid, order, pulledRef]) => [attributeName, baseUid, order, pulledRef] as AttributeRefRow),
+    qByCollectionChunks<AttributeRefRow>(
+        ATTRIBUTE_GROUP_REFS_QUERY,
+        baseRefUids,
+        GROUPING_ATTRIBUTE_NAMES.map(attributeName => `${attributeName}::`),
     ), {
     attributes: GROUPING_ATTRIBUTE_NAMES.length,
     baseRefs: baseRefUids.length,
-    attributeLookup: 'ref+prefix',
+    attributeLookup: 'prefix',
 })
 
 const attributeRowsByName = (rows: AttributeRefRow[]): Map<string, AttributeRefRow[]> => {
     const result = new Map<string, AttributeRefRow[]>()
 
     for (const row of rows) {
-        const attributeName = row[0]
+        const attributeName = row[0].slice(0, -2)
         const rowsForAttribute = result.get(attributeName) ?? []
         rowsForAttribute.push(row)
         result.set(attributeName, rowsForAttribute)

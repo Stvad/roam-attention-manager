@@ -127,10 +127,8 @@ describe('getFilteredBacklinkUids', () => {
             ])
             .mockReturnValueOnce([
                 ['a', keepRef],
-                ['c', {':block/uid': 'todo', ':node/title': 'TODO'}],
-            ])
-            .mockReturnValueOnce([
                 ['b', keepRef],
+                ['c', {':block/uid': 'todo', ':node/title': 'TODO'}],
             ])
 
         const result = getFilteredBacklinksWithBaseRefs('root', {
@@ -141,7 +139,7 @@ describe('getFilteredBacklinkUids', () => {
         expect(result.backlinkUids).toEqual(['a'])
         expect([...result.backlinkPageByUid.keys()]).toEqual(['a'])
         expect(result.baseGroupRows).toEqual([['a', keepRef]])
-        expect(mockQ).toHaveBeenCalledTimes(3)
+        expect(mockQ).toHaveBeenCalledTimes(2)
     })
 })
 
@@ -160,8 +158,8 @@ describe('buildReferenceGroupsWithDatalog', () => {
     })
 
     it('groups bulk Datalog rows with exclusions, attribute groups, fallback, and final merge', () => {
-        mockQ.mockImplementation((query: string, values: string[], attributeName?: string, prefix?: string) => {
-            if (query.includes(':in $ [?blockUid ...]') && query.includes('[?block :block/refs ?ref]')) {
+        mockQ.mockImplementation((query: string, values: string[], prefixes?: string[]) => {
+            if (query.includes(':in $ [?blockUid ...]') && query.includes('(or-join [?block ?ref]')) {
                 return [
                     ['a', null],
                     ['a', {':block/uid': 'topic', ':node/title': 'Topic'}],
@@ -178,19 +176,13 @@ describe('buildReferenceGroupsWithDatalog', () => {
                 throw new Error('Expected page refs to come from the cached backlink pages')
             }
 
-            if (query.includes(':in $ [?baseUid ...]') && attributeName === 'isa') {
+            if (query.includes(':in $ [?baseUid ...]') && prefixes?.includes('isa::')) {
                 expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
-                expect(prefix).toBe('isa::')
+                expect(prefixes).toEqual(['isa::', 'group with::'])
                 return [
-                    ['topic', 0, null],
-                    ['topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
+                    ['isa::', 'topic', 0, null],
+                    ['isa::', 'topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
                 ]
-            }
-
-            if (query.includes(':in $ [?baseUid ...]') && attributeName === 'group with') {
-                expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
-                expect(prefix).toBe('group with::')
-                return []
             }
 
             throw new Error(`Unexpected query: ${query}`)
