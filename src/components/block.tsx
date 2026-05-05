@@ -7,6 +7,7 @@ interface BlockProps {
     showZoomPath?: boolean
     open?: boolean
     metricsContext?: 'reference-group'
+    metricsRunId?: string
 }
 
 export const Block = (props: BlockProps) => {
@@ -38,7 +39,7 @@ export const Block = (props: BlockProps) => {
             'open?': props.open,
         })
         if (props.metricsContext === 'reference-group') {
-            recordReferenceBlockRender(props.uid, nowMs() - renderStartedAt)
+            recordReferenceBlockRender(props.metricsRunId, props.uid, nowMs() - renderStartedAt)
         }
 
         return () => observer.disconnect()

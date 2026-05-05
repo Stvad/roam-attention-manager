@@ -35,7 +35,28 @@ interface ReferenceGroupProps {
     title: string
     entities: GroupedEntity[]
     rootPageUid: string
+    metricsRunId?: string
 }
+
+type RenderGroupsState = {
+    groups: RenderedReferenceGroup[]
+    runId?: string
+}
+
+const renderedReferenceGroupsEqual = (
+    left: RenderedReferenceGroup[],
+    right: RenderedReferenceGroup[],
+): boolean =>
+    left.length === right.length &&
+    left.every((leftGroup, groupIndex) => {
+        const rightGroup = right[groupIndex]
+        return Boolean(rightGroup) &&
+            leftGroup.uid === rightGroup.uid &&
+            leftGroup.title === rightGroup.title &&
+            leftGroup.entities.length === rightGroup.entities.length &&
+            leftGroup.entities.every((entity, entityIndex) =>
+                entity.uid === rightGroup.entities[entityIndex]?.uid)
+    })
 
 export const useTogglButton = () => {
     const [isOpen, setIsOpen] = useState(true)
@@ -119,7 +140,7 @@ const refreshEntities = (entities: GroupedEntity[]) => {
     return refreshed
 }
 
-function ReferenceGroup({uid, title, entities, rootPageUid}: ReferenceGroupProps) {
+function ReferenceGroup({uid, title, entities, rootPageUid, metricsRunId}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()
 
     const hasReferenceToRootPage = (ent: RoamEntity) =>
@@ -203,7 +224,12 @@ function ReferenceGroup({uid, title, entities, rootPageUid}: ReferenceGroupProps
             <div className="reference-group-entities">
                 {entities.map(entity =>
                     <div className={'rm-reference-item'} key={entity.uid}>
-                        <Block uid={entity.uid} key={entity.uid} metricsContext="reference-group"/>
+                        <Block
+                            uid={entity.uid}
+                            key={entity.uid}
+                            metricsContext="reference-group"
+                            metricsRunId={metricsRunId}
+                        />
                     </div>)}
             </div>
         </Collapse>
@@ -227,7 +253,11 @@ export function ReferenceGroups(
         dontGroupThreshold = 150,
     }: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
-    const [renderGroups, setRenderGroups] = useState<RenderedReferenceGroup[]>([])
+    const [renderState, setRenderState] = useState<RenderGroupsState>({groups: []})
+    const renderGroups = renderState.groups
+    const renderGroupsRef = useRef<RenderedReferenceGroup[]>([])
+    const renderGroupsInitializedRef = useRef(false)
+    const mountedRef = useRef(false)
     const pendingRenderCommit = useRef<{
         runId: string
         entityUid: string
@@ -284,16 +314,22 @@ export function ReferenceGroups(
 
         const blockCount = groups.reduce((sum, group) => sum + group.entities.length, 0)
         const largestGroupSize = groups.reduce((max, group) => Math.max(max, group.entities.length), 0)
+        const renderUnchanged = renderGroupsInitializedRef.current &&
+            renderedReferenceGroupsEqual(renderGroupsRef.current, groups)
         metrics.mark('render output', {
             groups: groups.length,
             blocks: blockCount,
             largestGroupSize,
+            renderUnchanged,
         })
         metrics.log('data pipeline', {
             backlinkUids: backlinkUids.length,
             groups: groups.length,
             blocks: blockCount,
+            renderUnchanged,
         })
+
+        if (!mountedRef.current || renderUnchanged) return
 
         pendingRenderCommit.current = {
             runId: metrics.id,
@@ -309,7 +345,9 @@ export function ReferenceGroups(
             groups: groups.length,
         })
 
-        setRenderGroups(groups)
+        renderGroupsRef.current = groups
+        renderGroupsInitializedRef.current = true
+        setRenderState({groups, runId: metrics.id})
     }
 
     const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
@@ -320,13 +358,26 @@ export function ReferenceGroups(
     }
 
     useEffect(() => {
-        (async () => {
+        mountedRef.current = true
+        return () => {
+            mountedRef.current = false
+        }
+    }, [])
+
+    useEffect(() => {
+        let cancelled = false
+
+        const runInitialUpdate = async () => {
             await delay(0)
+            if (cancelled) return
+
             updateRenderGroups()
             document.addEventListener('keydown', updateReferenceGroupsShortcutHandler)
-        })()
+        }
+        runInitialUpdate()
 
         return () => {
+            cancelled = true
             document.removeEventListener('keydown', updateReferenceGroupsShortcutHandler)
         }
     }, [entityUid, smallestGroupSize])
@@ -348,7 +399,7 @@ export function ReferenceGroups(
         } else {
             setTimeout(logCommit, 0)
         }
-    }, [renderGroups])
+    }, [renderState])
     // todo loading indicator
     // todo if no groups are matching the size limit - show special message
     return <div
@@ -381,7 +432,14 @@ export function ReferenceGroups(
         >
             {renderGroups.length === 0 && <div>Calculating groups. If there are more then {dontGroupThreshold} backlinks - you need to manually press the refresh button.</div>}
             {renderGroups.map(({uid, title, entities}) =>
-                <ReferenceGroup uid={uid} title={title} entities={entities} rootPageUid={entityUid} key={uid}/>)}
+                <ReferenceGroup
+                    uid={uid}
+                    title={title}
+                    entities={entities}
+                    rootPageUid={entityUid}
+                    metricsRunId={renderState.runId}
+                    key={uid}
+                />)}
         </Collapse>
     </div>
 }

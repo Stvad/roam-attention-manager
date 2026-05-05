@@ -36,7 +36,7 @@ type PendingBlockRenderMetrics = {
 
 const LOG_PREFIX = '[roam-date reference groups]'
 
-let activeBlockRenderMetrics: PendingBlockRenderMetrics | null = null
+const activeBlockRenderMetrics = new Map<string, PendingBlockRenderMetrics>()
 
 export const nowMs = () =>
     typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -109,11 +109,11 @@ export const logReferenceGroupsCommit = ({
     })
 }
 
-const finishBlockRenderMetrics = (reason: string) => {
-    if (!activeBlockRenderMetrics) return
+const finishBlockRenderMetrics = (runId: string, reason: string) => {
+    const metrics = activeBlockRenderMetrics.get(runId)
+    if (!metrics) return
 
-    const metrics = activeBlockRenderMetrics
-    activeBlockRenderMetrics = null
+    activeBlockRenderMetrics.delete(runId)
     if (metrics.timer) clearTimeout(metrics.timer)
 
     const wallMs = roundMs(nowMs() - metrics.startedAt)
@@ -145,9 +145,13 @@ export const startReferenceBlockRenderMetrics = ({
     expectedBlocks: number
     groups: number
 }) => {
-    finishBlockRenderMetrics('replaced-by-new-run')
+    for (const [activeRunId, metrics] of activeBlockRenderMetrics) {
+        if (metrics.entityUid === entityUid) {
+            finishBlockRenderMetrics(activeRunId, 'replaced-by-new-run')
+        }
+    }
 
-    activeBlockRenderMetrics = {
+    activeBlockRenderMetrics.set(runId, {
         runId,
         entityUid,
         expectedBlocks,
@@ -156,29 +160,35 @@ export const startReferenceBlockRenderMetrics = ({
         count: 0,
         totalMs: 0,
         maxMs: 0,
-    }
+    })
 
     if (expectedBlocks === 0) {
-        activeBlockRenderMetrics.timer = setTimeout(() => finishBlockRenderMetrics('no-blocks'), 0)
+        const metrics = activeBlockRenderMetrics.get(runId)
+        if (metrics) {
+            metrics.timer = setTimeout(() => finishBlockRenderMetrics(runId, 'no-blocks'), 0)
+        }
     }
 }
 
-export const recordReferenceBlockRender = (uid: string, durationMs: number) => {
-    if (!activeBlockRenderMetrics) return
+export const recordReferenceBlockRender = (runId: string | undefined, uid: string, durationMs: number) => {
+    if (!runId) return
 
-    activeBlockRenderMetrics.count += 1
-    activeBlockRenderMetrics.totalMs += durationMs
+    const metrics = activeBlockRenderMetrics.get(runId)
+    if (!metrics) return
 
-    if (durationMs > activeBlockRenderMetrics.maxMs) {
-        activeBlockRenderMetrics.maxMs = durationMs
-        activeBlockRenderMetrics.maxUid = uid
+    metrics.count += 1
+    metrics.totalMs += durationMs
+
+    if (durationMs > metrics.maxMs) {
+        metrics.maxMs = durationMs
+        metrics.maxUid = uid
     }
 
-    if (activeBlockRenderMetrics.timer) clearTimeout(activeBlockRenderMetrics.timer)
+    if (metrics.timer) clearTimeout(metrics.timer)
 
-    const done = activeBlockRenderMetrics.count >= activeBlockRenderMetrics.expectedBlocks
-    activeBlockRenderMetrics.timer = setTimeout(
-        () => finishBlockRenderMetrics(done ? 'expected-blocks-rendered' : 'idle-timeout'),
+    const done = metrics.count >= metrics.expectedBlocks
+    metrics.timer = setTimeout(
+        () => finishBlockRenderMetrics(runId, done ? 'expected-blocks-rendered' : 'idle-timeout'),
         done ? 0 : 1000,
     )
 }
