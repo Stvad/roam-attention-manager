@@ -81,6 +81,7 @@ jest.mock('roam-api-wrappers/dist/data/collection', () => {
 import {
     buildReferenceGroupsWithDatalog,
     getFilteredBacklinkUids,
+    getFilteredBacklinksWithBaseRefs,
 } from '../datalog-groups'
 
 describe('getFilteredBacklinkUids', () => {
@@ -101,12 +102,11 @@ describe('getFilteredBacklinkUids', () => {
         mockQ
             .mockReturnValueOnce([
                 ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
-                ['b', {':block/uid': 'page-b', ':node/title': 'Page B'}],
+                ['b', {':block/uid': 'page-b', ':node/title': 'Drop'}],
                 ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
             ])
             .mockReturnValueOnce([['Keep', 'a']])
             .mockReturnValueOnce([['Keep', 'b']])
-            .mockReturnValueOnce([['Drop', 'b']])
 
         const result = getFilteredBacklinkUids('root', {
             includes: ['Keep'],
@@ -114,7 +114,34 @@ describe('getFilteredBacklinkUids', () => {
         })
 
         expect(result).toEqual(['a'])
-        expect(mockQ).toHaveBeenCalledTimes(4)
+        expect(mockQ).toHaveBeenCalledTimes(3)
+    })
+
+    it('reuses prefetched base refs to apply filters without extra filter queries', () => {
+        const keepRef = {':block/uid': 'keep', ':node/title': 'Keep'}
+        mockQ
+            .mockReturnValueOnce([
+                ['a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
+                ['b', {':block/uid': 'page-b', ':node/title': 'Drop'}],
+                ['c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
+            ])
+            .mockReturnValueOnce([
+                ['a', keepRef],
+                ['c', {':block/uid': 'todo', ':node/title': 'TODO'}],
+            ])
+            .mockReturnValueOnce([
+                ['b', keepRef],
+            ])
+
+        const result = getFilteredBacklinksWithBaseRefs('root', {
+            includes: ['Keep'],
+            removes: ['Drop'],
+        })
+
+        expect(result.backlinkUids).toEqual(['a'])
+        expect([...result.backlinkPageByUid.keys()]).toEqual(['a'])
+        expect(result.baseGroupRows).toEqual([['a', keepRef]])
+        expect(mockQ).toHaveBeenCalledTimes(3)
     })
 })
 

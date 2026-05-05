@@ -20,6 +20,7 @@ import {migrateBlockToMemo, showMigrationToast} from '../srs/migrate-to-memo'
 import {
     buildReferenceGroupsWithDatalog,
     getFilteredBacklinks,
+    getFilteredBacklinksWithBaseRefs,
 } from './datalog-groups'
 import type {GroupedEntity, RenderedReferenceGroup} from './datalog-groups'
 import {
@@ -253,7 +254,10 @@ export function ReferenceGroups(
             return
         }
 
-        const {backlinkUids, backlinkPageByUid} = getFilteredBacklinks(entityUid, entity.referenceFilter, metrics)
+        const backlinkData = refresh
+            ? getFilteredBacklinksWithBaseRefs(entityUid, entity.referenceFilter, metrics, dontGroupThreshold)
+            : getFilteredBacklinks(entityUid, entity.referenceFilter, metrics)
+        const {backlinkUids, backlinkPageByUid, baseGroupRows} = backlinkData
         // todo this is ugly?
         if (backlinkUids.length > dontGroupThreshold && !refresh) {
             console.warn(`Too many backlinks (${backlinkUids.length}) for ${entityUid} - skipping initial render.
@@ -270,6 +274,7 @@ export function ReferenceGroups(
             rootText: entity.text,
             backlinkUids,
             backlinkPageByUid,
+            baseGroupRows,
             highPriorityPages,
             lowPriorityPages,
             smallestGroupSize,

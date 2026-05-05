@@ -29,6 +29,11 @@ type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
 type RootBacklinkRow = [string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
+type FilteredBacklinkData = {
+    backlinkUids: string[]
+    backlinkPageByUid: Map<string, RefInfo>
+    baseGroupRows?: RefRow[]
+}
 
 export type GroupedEntity = Pick<RoamEntity, 'uid'>
 
@@ -43,6 +48,7 @@ type BuildReferenceGroupsOptions = {
     rootText: string
     backlinkUids: string[]
     backlinkPageByUid?: Map<string, RefInfo>
+    baseGroupRows?: RefRow[]
     dontGroupReferencesTo: RegExp[]
     highPriorityPages: RegExp[]
     lowPriorityPages: RegExp[]
@@ -84,7 +90,7 @@ const toRefInfo = (ref: PulledRef): RefInfo | null => {
 }
 
 const ROOT_BACKLINK_UIDS_QUERY = `
-[:find ?uid (pull ?page [:block/uid :node/title :block/string])
+[:find ?uid (pull ?page [:block/uid :node/title])
  :in $ ?rootUid
  :where
    [?root :block/uid ?rootUid]
@@ -145,7 +151,7 @@ const PARENT_GROUP_REFS_QUERY = `
 `
 
 const PAGE_GROUP_REFS_QUERY = `
-[:find ?blockUid (pull ?page [:block/uid :node/title :block/string])
+[:find ?blockUid (pull ?page [:block/uid :node/title])
  :in $ [?blockUid ...]
  :where
    [?block :block/uid ?blockUid]
@@ -204,6 +210,7 @@ const mergeTitleRefRows = (...maps: Map<string, Set<string>>[]): Map<string, Set
 const visibleRefUidsByFilterTitle = (
     rootUid: string,
     titles: string[],
+    backlinkPageByUid?: Map<string, RefInfo>,
     metrics?: ReferenceGroupMetrics,
 ): Map<string, Set<string>> => {
     if (!titles.length) return new Map()
@@ -212,8 +219,14 @@ const visibleRefUidsByFilterTitle = (
         q<FilterRefRow>(DIRECT_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
     const parentRows = measure(metrics, 'filter parent refs query', () =>
         q<FilterRefRow>(PARENT_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
-    const pageRows = measure(metrics, 'filter page refs query', () =>
-        q<FilterRefRow>(PAGE_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
+    const pageRows = backlinkPageByUid
+        ? measure(metrics, 'filter cached page refs', () =>
+            filterPageRowsFromBacklinkPages(titles, backlinkPageByUid), {
+            titles: titles.length,
+            backlinks: backlinkPageByUid.size,
+        })
+        : measure(metrics, 'filter page refs query', () =>
+            q<FilterRefRow>(PAGE_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
     const result = mergeTitleRefRows(
         refRowsByTitle(directRows),
         refRowsByTitle(parentRows),
@@ -225,11 +238,128 @@ const visibleRefUidsByFilterTitle = (
         directRows: directRows.length,
         parentRows: parentRows.length,
         pageRows: pageRows.length,
+        pageRowsSource: backlinkPageByUid ? 'root backlink query' : 'query',
         titlesWithMatches: result.size,
         matchedBlocks: new Set([...result.values()].flatMap(uids => [...uids])).size,
     })
 
     return result
+}
+
+const filterPageRowsFromBacklinkPages = (
+    titles: string[],
+    backlinkPageByUid: Map<string, RefInfo>,
+): FilterRefRow[] => {
+    const wantedTitles = new Set(titles)
+    return [...backlinkPageByUid.entries()]
+        .filter(([, page]) => wantedTitles.has(page.text))
+        .map(([uid, page]) => [page.text, uid] as FilterRefRow)
+}
+
+const visibleRefUidsByCachedBaseRows = (
+    titles: string[],
+    baseGroupRows: RefRow[],
+    backlinkPageByUid: Map<string, RefInfo>,
+    metrics?: ReferenceGroupMetrics,
+): Map<string, Set<string>> => {
+    const wantedTitles = new Set(titles)
+    const {refRows, pageRows} = measure(metrics, 'filter cached base refs', () => ({
+        refRows: baseGroupRows
+            .map(([uid, pulledRef]) => [uid, toRefInfo(pulledRef)] as const)
+            .filter((entry): entry is readonly [string, RefInfo] => {
+                const ref = entry[1]
+                return ref !== null && wantedTitles.has(ref.text)
+            })
+            .map(([uid, ref]) => [ref.text, uid] as FilterRefRow),
+        pageRows: filterPageRowsFromBacklinkPages(titles, backlinkPageByUid),
+    }), {
+        titles: titles.length,
+        baseRows: baseGroupRows.length,
+        backlinks: backlinkPageByUid.size,
+    })
+    const result = mergeTitleRefRows(
+        refRowsByTitle(refRows),
+        refRowsByTitle(pageRows),
+    )
+
+    metrics?.mark('filter title results', {
+        titles: titles.length,
+        baseRows: refRows.length,
+        pageRows: pageRows.length,
+        baseRowsSource: 'group refs query',
+        pageRowsSource: 'root backlink query',
+        titlesWithMatches: result.size,
+        matchedBlocks: new Set([...result.values()].flatMap(uids => [...uids])).size,
+    })
+
+    return result
+}
+
+const queryRootBacklinks = (
+    rootUid: string,
+    metrics?: ReferenceGroupMetrics,
+): FilteredBacklinkData => {
+    const rootBacklinkRows = measure(metrics, 'root backlink uid query', () =>
+        q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
+    const backlinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
+    const backlinkPageByUid = new Map<string, RefInfo>()
+    rootBacklinkRows.forEach(([uid, pulledPage]) => {
+        const page = toRefInfo(pulledPage)
+        if (page) backlinkPageByUid.set(uid, page)
+    })
+
+    return {
+        backlinkUids,
+        backlinkPageByUid,
+    }
+}
+
+const filterBacklinks = (
+    rootUid: string,
+    backlinks: FilteredBacklinkData,
+    filter: ReferenceFilter,
+    metrics?: ReferenceGroupMetrics,
+): FilteredBacklinkData => {
+    metrics?.mark('reference filters', {
+        backlinks: backlinks.backlinkUids.length,
+        pages: backlinks.backlinkPageByUid.size,
+        includes: filter.includes.length,
+        removes: filter.removes.length,
+    })
+
+    if (!filter.includes.length && !filter.removes.length) {
+        return backlinks
+    }
+
+    const filterTitles = unique([...filter.includes, ...filter.removes])
+    const matchesByTitle = backlinks.baseGroupRows
+        ? visibleRefUidsByCachedBaseRows(
+            filterTitles,
+            backlinks.baseGroupRows,
+            backlinks.backlinkPageByUid,
+            metrics,
+        )
+        : visibleRefUidsByFilterTitle(rootUid, filterTitles, backlinks.backlinkPageByUid, metrics)
+    const includeMatches = filter.includes.map(title => matchesByTitle.get(title) ?? new Set<string>())
+    const removeMatches = filter.removes.map(title => matchesByTitle.get(title) ?? new Set<string>())
+
+    const filteredBacklinkUids = measure(metrics, 'apply filter sets', () =>
+        backlinks.backlinkUids.filter(uid =>
+            includeMatches.every(matches => matches.has(uid)) &&
+            removeMatches.every(matches => !matches.has(uid))), {
+        backlinks: backlinks.backlinkUids.length,
+        includes: includeMatches.length,
+        removes: removeMatches.length,
+    })
+    const filteredBacklinkUidSet = new Set(filteredBacklinkUids)
+
+    return {
+        backlinkUids: filteredBacklinkUids,
+        backlinkPageByUid: new Map(filteredBacklinkUids
+            .map(uid => [uid, backlinks.backlinkPageByUid.get(uid)] as const)
+            .filter((entry): entry is readonly [string, RefInfo] => Boolean(entry[1]))),
+        baseGroupRows: backlinks.baseGroupRows?.filter(([uid]) => filteredBacklinkUidSet.has(uid)),
+    }
 }
 
 export const getFilteredBacklinkUids = (
@@ -244,53 +374,28 @@ export const getFilteredBacklinks = (
     rootUid: string,
     filter: ReferenceFilter,
     metrics?: ReferenceGroupMetrics,
-): {
-    backlinkUids: string[]
-    backlinkPageByUid: Map<string, RefInfo>
-} => {
-    const rootBacklinkRows = measure(metrics, 'root backlink uid query', () =>
-        q<RootBacklinkRow>(ROOT_BACKLINK_UIDS_QUERY, rootUid))
-    const allBacklinkUids = unique(rootBacklinkRows.map(([uid]) => uid))
-    const pageByUid = new Map<string, RefInfo>()
-    rootBacklinkRows.forEach(([uid, pulledPage]) => {
-        const page = toRefInfo(pulledPage)
-        if (page) pageByUid.set(uid, page)
-    })
+): FilteredBacklinkData => filterBacklinks(rootUid, queryRootBacklinks(rootUid, metrics), filter, metrics)
 
-    metrics?.mark('reference filters', {
-        backlinks: allBacklinkUids.length,
-        pages: pageByUid.size,
-        includes: filter.includes.length,
-        removes: filter.removes.length,
-    })
-
-    if (!filter.includes.length && !filter.removes.length) {
-        return {
-            backlinkUids: allBacklinkUids,
-            backlinkPageByUid: pageByUid,
-        }
+export const getFilteredBacklinksWithBaseRefs = (
+    rootUid: string,
+    filter: ReferenceFilter,
+    metrics?: ReferenceGroupMetrics,
+    maxPrefetchBacklinks: number = Number.POSITIVE_INFINITY,
+): FilteredBacklinkData => {
+    const backlinks = queryRootBacklinks(rootUid, metrics)
+    if (backlinks.backlinkUids.length > maxPrefetchBacklinks) {
+        metrics?.mark('base refs prefetch skipped', {
+            backlinks: backlinks.backlinkUids.length,
+            maxPrefetchBacklinks,
+        })
+        return filterBacklinks(rootUid, backlinks, filter, metrics)
     }
 
-    const filterTitles = unique([...filter.includes, ...filter.removes])
-    const matchesByTitle = visibleRefUidsByFilterTitle(rootUid, filterTitles, metrics)
-    const includeMatches = filter.includes.map(title => matchesByTitle.get(title) ?? new Set<string>())
-    const removeMatches = filter.removes.map(title => matchesByTitle.get(title) ?? new Set<string>())
-
-    const filteredBacklinkUids = measure(metrics, 'apply filter sets', () =>
-        allBacklinkUids.filter(uid =>
-            includeMatches.every(matches => matches.has(uid)) &&
-            removeMatches.every(matches => !matches.has(uid))), {
-        backlinks: allBacklinkUids.length,
-        includes: includeMatches.length,
-        removes: removeMatches.length,
-    })
-
-    return {
-        backlinkUids: filteredBacklinkUids,
-        backlinkPageByUid: new Map(filteredBacklinkUids
-            .map(uid => [uid, pageByUid.get(uid)] as const)
-            .filter((entry): entry is readonly [string, RefInfo] => Boolean(entry[1]))),
-    }
+    const baseGroupRows = queryBaseGroupRows(backlinks.backlinkUids, metrics, false)
+    return filterBacklinks(rootUid, {
+        ...backlinks,
+        baseGroupRows,
+    }, filter, metrics)
 }
 
 const addMemberToGroup = (
@@ -520,6 +625,7 @@ export const buildReferenceGroupsWithDatalog = ({
     rootText,
     backlinkUids,
     backlinkPageByUid,
+    baseGroupRows,
     dontGroupReferencesTo,
     highPriorityPages,
     lowPriorityPages,
@@ -563,11 +669,12 @@ export const buildReferenceGroupsWithDatalog = ({
         let skippedPulledRefs = 0
         let cachedPageRefs = 0
 
-        for (const [memberUid, pulledRef] of queryBaseGroupRows(
+        const rows = baseGroupRows ?? queryBaseGroupRows(
             [...memberByUid.keys()],
             metrics,
             backlinkPageByUid === undefined,
-        )) {
+        )
+        for (const [memberUid, pulledRef] of rows) {
             const ref = toRefInfo(pulledRef)
             if (!ref) {
                 skippedPulledRefs += 1
@@ -590,6 +697,7 @@ export const buildReferenceGroupsWithDatalog = ({
             groups: referenceGroups.size,
             membersWithBaseRefs: baseRefsByMemberUid.size,
             cachedPageRefs,
+            baseRowsSource: baseGroupRows ? 'prefetch' : 'query',
             skippedPulledRefs,
         })
     })
