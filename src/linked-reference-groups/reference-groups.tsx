@@ -1,12 +1,10 @@
 import React, {useEffect, useState} from 'react'
 import {RoamEntity, Page as RoamPage} from 'roam-api-wrappers/dist/data'
 import {
-    CommonReferencesGrouper,
     defaultExclusions,
     defaultLowPriority,
     getGroupsForEntity,
     matchesFilter,
-    mergeGroupsSmallerThan,
 } from 'roam-api-wrappers/dist/data/collection'
 import {Block} from '../components/block'
 import {usePromptDialog} from '../components/prompt-dialog'
@@ -19,9 +17,15 @@ import {delay} from '../core/async'
 import {randomFromInterval} from '../core/random'
 import {RoamDate} from 'roam-api-wrappers/dist/date'
 import {migrateBlockToMemo, showMigrationToast} from '../srs/migrate-to-memo'
+import {
+    buildReferenceGroupsWithDatalog,
+    getFilteredBacklinkUids,
+} from './datalog-groups'
+import type {RenderedReferenceGroup} from './datalog-groups'
 
 interface ReferenceGroupProps {
     uid: string
+    title: string
     entities: RoamEntity[]
     rootPageUid: string
 }
@@ -102,7 +106,7 @@ const NextDayWithThisGroupButton = ({entities}: { entities: () => RoamEntity[] }
 const refreshEntities = (entities: RoamEntity[]) =>
   entities.map(it => RoamEntity.fromUid(it.uid)!)
 
-function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
+function ReferenceGroup({uid, title, entities, rootPageUid}: ReferenceGroupProps) {
     const {isOpen, ToggleButton} = useTogglButton()
 
     const hasReferenceToRootPage = (ent: RoamEntity) =>
@@ -142,7 +146,7 @@ function ReferenceGroup({uid, entities, rootPageUid}: ReferenceGroupProps) {
             }}
         >
             <ToggleButton/>
-            <div>{RoamEntity.fromUid(uid)?.text} ({entities.length})</div>
+            <div>{title} ({entities.length})</div>
         </div>
 
         <Collapse isOpen={isOpen} keepChildrenMounted={true} transitionDuration={0}>
@@ -210,7 +214,7 @@ export function ReferenceGroups(
         dontGroupThreshold = 150,
     }: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
-    const [renderGroups, setRenderGroups] = useState<[string, RoamEntity[]][]>([])
+    const [renderGroups, setRenderGroups] = useState<RenderedReferenceGroup[]>([])
     // todo remember collapse state in local storage
 
     // todo also have a shortcut for refresh
@@ -221,30 +225,26 @@ export function ReferenceGroups(
             return
         }
 
-        const backlinks = entity.backlinks.filter(it => matchesFilter(it, entity.referenceFilter))
+        const backlinkUids = getFilteredBacklinkUids(entityUid, entity.referenceFilter)
         // todo this is ugly?
-        if (backlinks.length > dontGroupThreshold && !refresh) {
-            console.warn(`Too many backlinks (${backlinks.length}) for ${entityUid} - skipping initial render.
+        if (backlinkUids.length > dontGroupThreshold && !refresh) {
+            console.warn(`Too many backlinks (${backlinkUids.length}) for ${entityUid} - skipping initial render.
              Click refresh to render anyway.`)
             return
         }
 
-        const groups = new CommonReferencesGrouper(
-            entityUid,
-            [...defaultExclusions, new RegExp(`^${entity.text}$`)],
-            {
-                low: lowPriorityPages,
-                high: highPriorityPages,
-            }).group(backlinks)
-
-        const mergedGroups = mergeGroupsSmallerThan(
-            groups,
-            entityUid,
+        const groups = buildReferenceGroupsWithDatalog({
+            rootUid: entityUid,
+            rootText: entity.text,
+            backlinkUids,
+            highPriorityPages,
+            lowPriorityPages,
             smallestGroupSize,
-            uid => highPriorityPages.some(it => it.test(RoamEntity.fromUid(uid)?.text ?? '')),
-        )
-        console.log({mergedGroups})
-        setRenderGroups(Array.from(mergedGroups.entries()))
+            dontGroupReferencesTo: [...defaultExclusions, new RegExp(`^${entity.text}$`)],
+        })
+
+        console.log({groups})
+        setRenderGroups(groups)
     }
 
     const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
@@ -296,8 +296,8 @@ export function ReferenceGroups(
             }}
         >
             {renderGroups.length === 0 && <div>Calculating groups. If there are more then {dontGroupThreshold} backlinks - you need to manually press the refresh button.</div>}
-            {renderGroups.map(([uid, entities]) =>
-                <ReferenceGroup uid={uid} entities={entities} rootPageUid={entityUid} key={uid}/>)}
+            {renderGroups.map(({uid, title, entities}) =>
+                <ReferenceGroup uid={uid} title={title} entities={entities} rootPageUid={entityUid} key={uid}/>)}
         </Collapse>
     </div>
 }
