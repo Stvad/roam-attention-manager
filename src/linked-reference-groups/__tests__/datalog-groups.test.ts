@@ -159,6 +159,7 @@ describe('buildReferenceGroupsWithDatalog', () => {
         mockQ.mockImplementation((query: string, values: string[], prefix?: string) => {
             if (query.includes(':in $ [?blockUid ...]') && query.includes('[?block :block/refs ?ref]')) {
                 return [
+                    ['a', null],
                     ['a', {':block/uid': 'topic', ':node/title': 'Topic'}],
                     ['b', {':block/uid': 'topic', ':node/title': 'Topic'}],
                     ['c', {':block/uid': 'todo', ':node/title': 'TODO'}],
@@ -176,6 +177,7 @@ describe('buildReferenceGroupsWithDatalog', () => {
             if (query.includes(':in $ [?baseUid ...]') && prefix === 'isa::') {
                 expect(values).toEqual(['topic'])
                 return [
+                    ['topic', 0, null],
                     ['topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
                 ]
             }

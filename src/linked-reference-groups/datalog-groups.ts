@@ -17,7 +17,7 @@ type PulledRef = {
     ':block/uid'?: string
     ':node/title'?: string
     ':block/string'?: string
-}
+} | null | undefined
 
 type RefInfo = {
     uid: string
@@ -60,11 +60,11 @@ const chunk = <T,>(items: T[], size: number): T[][] => {
 const qByCollectionChunks = <T extends unknown[]>(query: string, values: string[], ...params: unknown[]): T[] =>
     chunk(values, QUERY_CHUNK_SIZE).flatMap(valueChunk => q<T>(query, valueChunk, ...params))
 
-const pulledUid = (ref: PulledRef): string => ref[':block/uid'] ?? ref.uid ?? ''
+const pulledUid = (ref: PulledRef): string => ref?.[':block/uid'] ?? ref?.uid ?? ''
 
-const pulledTitle = (ref: PulledRef): string | undefined => ref[':node/title'] ?? ref.title
+const pulledTitle = (ref: PulledRef): string | undefined => ref?.[':node/title'] ?? ref?.title
 
-const pulledText = (ref: PulledRef): string => pulledTitle(ref) ?? ref[':block/string'] ?? ref.string ?? ''
+const pulledText = (ref: PulledRef): string => pulledTitle(ref) ?? ref?.[':block/string'] ?? ref?.string ?? ''
 
 const toRefInfo = (ref: PulledRef): RefInfo | null => {
     const uid = pulledUid(ref)
