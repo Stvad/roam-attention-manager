@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react'
+import React, {useEffect, useRef, useState} from 'react'
 import {RoamEntity, Page as RoamPage} from 'roam-api-wrappers/dist/data'
 import {
     defaultExclusions,
@@ -22,6 +22,12 @@ import {
     getFilteredBacklinkUids,
 } from './datalog-groups'
 import type {GroupedEntity, RenderedReferenceGroup} from './datalog-groups'
+import {
+    createReferenceGroupMetrics,
+    logReferenceGroupsCommit,
+    nowMs,
+    startReferenceBlockRenderMetrics,
+} from './metrics'
 
 interface ReferenceGroupProps {
     uid: string
@@ -196,7 +202,7 @@ function ReferenceGroup({uid, title, entities, rootPageUid}: ReferenceGroupProps
             <div className="reference-group-entities">
                 {entities.map(entity =>
                     <div className={'rm-reference-item'} key={entity.uid}>
-                        <Block uid={entity.uid} key={entity.uid}/>
+                        <Block uid={entity.uid} key={entity.uid} metricsContext="reference-group"/>
                     </div>)}
             </div>
         </Collapse>
@@ -221,21 +227,41 @@ export function ReferenceGroups(
     }: ReferenceGroupsProps) {
     const {isOpen, ToggleButton} = useTogglButton()
     const [renderGroups, setRenderGroups] = useState<RenderedReferenceGroup[]>([])
+    const pendingRenderCommit = useRef<{
+        runId: string
+        entityUid: string
+        startedAt: number
+        groups: number
+        blocks: number
+    } | null>(null)
     // todo remember collapse state in local storage
 
     // todo also have a shortcut for refresh
     function updateRenderGroups(refresh: boolean = false) {
-        const entity = RoamEntity.fromUid(entityUid)
+        const metrics = createReferenceGroupMetrics({
+            entityUid,
+            refresh,
+            smallestGroupSize,
+            highPriorityPageCount: highPriorityPages.length,
+            lowPriorityPageCount: lowPriorityPages.length,
+        })
+
+        const entity = metrics.measure('load root entity', () => RoamEntity.fromUid(entityUid))
         if (!entity) {
             console.error(`${entityUid} entity not found`)
+            metrics.log('missing root entity')
             return
         }
 
-        const backlinkUids = getFilteredBacklinkUids(entityUid, entity.referenceFilter)
+        const backlinkUids = getFilteredBacklinkUids(entityUid, entity.referenceFilter, metrics)
         // todo this is ugly?
         if (backlinkUids.length > dontGroupThreshold && !refresh) {
             console.warn(`Too many backlinks (${backlinkUids.length}) for ${entityUid} - skipping initial render.
              Click refresh to render anyway.`)
+            metrics.log('skipped auto render', {
+                backlinkUids: backlinkUids.length,
+                dontGroupThreshold,
+            })
             return
         }
 
@@ -247,9 +273,36 @@ export function ReferenceGroups(
             lowPriorityPages,
             smallestGroupSize,
             dontGroupReferencesTo: [...defaultExclusions, new RegExp(`^${entity.text}$`)],
+            metrics,
         })
 
-        console.log({groups})
+        const blockCount = groups.reduce((sum, group) => sum + group.entities.length, 0)
+        const largestGroupSize = groups.reduce((max, group) => Math.max(max, group.entities.length), 0)
+        metrics.mark('render output', {
+            groups: groups.length,
+            blocks: blockCount,
+            largestGroupSize,
+        })
+        metrics.log('data pipeline', {
+            backlinkUids: backlinkUids.length,
+            groups: groups.length,
+            blocks: blockCount,
+        })
+
+        pendingRenderCommit.current = {
+            runId: metrics.id,
+            entityUid,
+            startedAt: nowMs(),
+            groups: groups.length,
+            blocks: blockCount,
+        }
+        startReferenceBlockRenderMetrics({
+            runId: metrics.id,
+            entityUid,
+            expectedBlocks: blockCount,
+            groups: groups.length,
+        })
+
         setRenderGroups(groups)
     }
 
@@ -271,6 +324,25 @@ export function ReferenceGroups(
             document.removeEventListener('keydown', updateReferenceGroupsShortcutHandler)
         }
     }, [entityUid, smallestGroupSize])
+
+    useEffect(() => {
+        const pending = pendingRenderCommit.current
+        if (!pending) return
+
+        pendingRenderCommit.current = null
+        const logCommit = () => {
+            logReferenceGroupsCommit({
+                ...pending,
+                durationMs: nowMs() - pending.startedAt,
+            })
+        }
+
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(logCommit)
+        } else {
+            setTimeout(logCommit, 0)
+        }
+    }, [renderGroups])
     // todo loading indicator
     // todo if no groups are matching the size limit - show special message
     return <div

@@ -1,10 +1,12 @@
 import {useEffect, useRef} from 'react'
 import {createHTMLObserver} from 'roamjs-components/dom'
+import {nowMs, recordReferenceBlockRender} from '../linked-reference-groups/metrics'
 
 interface BlockProps {
     uid: string
     showZoomPath?: boolean
     open?: boolean
+    metricsContext?: 'reference-group'
 }
 
 export const Block = (props: BlockProps) => {
@@ -27,6 +29,7 @@ export const Block = (props: BlockProps) => {
             },
         })
 
+        const renderStartedAt = nowMs()
         window.roamAlphaAPI.ui.components.renderBlock({
             el: ref.current,
             uid: props.uid,
@@ -34,6 +37,9 @@ export const Block = (props: BlockProps) => {
             'zoom-path?': props.showZoomPath,
             'open?': props.open,
         })
+        if (props.metricsContext === 'reference-group') {
+            recordReferenceBlockRender(props.uid, nowMs() - renderStartedAt)
+        }
 
         return () => observer.disconnect()
     }, [ref])

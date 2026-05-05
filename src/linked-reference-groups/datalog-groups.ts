@@ -5,6 +5,7 @@ import {
 import type {ReferenceGroupMap} from 'roam-api-wrappers/dist/data/collection'
 import type {RoamEntity} from 'roam-api-wrappers/dist/data'
 import type {ReferenceFilter} from 'roam-api-wrappers/dist/data/types'
+import type {ReferenceGroupMetrics} from './metrics'
 
 const GROUPING_ATTRIBUTE_NAMES = ['isa', 'group with']
 const QUERY_CHUNK_SIZE = 500
@@ -43,6 +44,7 @@ type BuildReferenceGroupsOptions = {
     highPriorityPages: RegExp[]
     lowPriorityPages: RegExp[]
     smallestGroupSize: number
+    metrics?: ReferenceGroupMetrics
 }
 
 const q = <T extends unknown[]>(query: string, ...params: unknown[]): T[] =>
@@ -60,6 +62,9 @@ const chunk = <T,>(items: T[], size: number): T[][] => {
 
 const qByCollectionChunks = <T extends unknown[]>(query: string, values: string[], ...params: unknown[]): T[] =>
     chunk(values, QUERY_CHUNK_SIZE).flatMap(valueChunk => q<T>(query, valueChunk, ...params))
+
+const measure = <T,>(metrics: ReferenceGroupMetrics | undefined, stage: string, fn: () => T, details?: Record<string, unknown>): T =>
+    metrics ? metrics.measure(stage, fn, details) : fn()
 
 const pulledUid = (ref: PulledRef): string => ref?.[':block/uid'] ?? ref?.uid ?? ''
 
@@ -162,25 +167,54 @@ const PAGES_BY_TITLE_QUERY = `
    [?page :node/title ?title]]
 `
 
-const visibleRefUidsForFilterTitle = (rootUid: string, title: string): Set<string> => {
-    const rows = [
-        ...q<[string]>(DIRECT_FILTER_REF_QUERY, rootUid, title),
-        ...q<[string]>(PARENT_FILTER_REF_QUERY, rootUid, title),
-        ...q<[string]>(PAGE_FILTER_REF_QUERY, rootUid, title),
-    ]
-    return new Set(rows.map(([uid]) => uid))
+const visibleRefUidsForFilterTitle = (rootUid: string, title: string, metrics?: ReferenceGroupMetrics): Set<string> => {
+    const directRows = measure(metrics, 'filter direct refs query', () =>
+        q<[string]>(DIRECT_FILTER_REF_QUERY, rootUid, title), {title})
+    const parentRows = measure(metrics, 'filter parent refs query', () =>
+        q<[string]>(PARENT_FILTER_REF_QUERY, rootUid, title), {title})
+    const pageRows = measure(metrics, 'filter page refs query', () =>
+        q<[string]>(PAGE_FILTER_REF_QUERY, rootUid, title), {title})
+    const rows = [...directRows, ...parentRows, ...pageRows]
+    const result = new Set(rows.map(([uid]) => uid))
+
+    metrics?.mark('filter title result', {
+        title,
+        directRows: directRows.length,
+        parentRows: parentRows.length,
+        pageRows: pageRows.length,
+        matchedBlocks: result.size,
+    })
+
+    return result
 }
 
-export const getFilteredBacklinkUids = (rootUid: string, filter: ReferenceFilter): string[] => {
-    const allBacklinkUids = unique(q<[string]>(ROOT_BACKLINK_UIDS_QUERY, rootUid).map(([uid]) => uid))
+export const getFilteredBacklinkUids = (
+    rootUid: string,
+    filter: ReferenceFilter,
+    metrics?: ReferenceGroupMetrics,
+): string[] => {
+    const allBacklinkUids = measure(metrics, 'root backlink uid query', () =>
+        unique(q<[string]>(ROOT_BACKLINK_UIDS_QUERY, rootUid).map(([uid]) => uid)))
+
+    metrics?.mark('reference filters', {
+        backlinks: allBacklinkUids.length,
+        includes: filter.includes.length,
+        removes: filter.removes.length,
+    })
+
     if (!filter.includes.length && !filter.removes.length) return allBacklinkUids
 
-    const includeMatches = filter.includes.map(title => visibleRefUidsForFilterTitle(rootUid, title))
-    const removeMatches = filter.removes.map(title => visibleRefUidsForFilterTitle(rootUid, title))
+    const includeMatches = filter.includes.map(title => visibleRefUidsForFilterTitle(rootUid, title, metrics))
+    const removeMatches = filter.removes.map(title => visibleRefUidsForFilterTitle(rootUid, title, metrics))
 
-    return allBacklinkUids.filter(uid =>
-        includeMatches.every(matches => matches.has(uid)) &&
-        removeMatches.every(matches => !matches.has(uid)))
+    return measure(metrics, 'apply filter sets', () =>
+        allBacklinkUids.filter(uid =>
+            includeMatches.every(matches => matches.has(uid)) &&
+            removeMatches.every(matches => !matches.has(uid))), {
+        backlinks: allBacklinkUids.length,
+        includes: includeMatches.length,
+        removes: removeMatches.length,
+    })
 }
 
 const addMemberToGroup = (
@@ -228,15 +262,27 @@ const mergeGroupsSmallerThan = (
     return new Map([...large, [intoKey, mergedItems]])
 }
 
-const queryBaseGroupRows = (backlinkUids: string[]): RefRow[] => [
-    ...qByCollectionChunks<RefRow>(DIRECT_GROUP_REFS_QUERY, backlinkUids),
-    ...qByCollectionChunks<RefRow>(PARENT_GROUP_REFS_QUERY, backlinkUids),
-    ...qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids),
-]
+const queryBaseGroupRows = (backlinkUids: string[], metrics?: ReferenceGroupMetrics): RefRow[] => {
+    const directRows = measure(metrics, 'group direct refs query', () =>
+        qByCollectionChunks<RefRow>(DIRECT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+    const parentRows = measure(metrics, 'group parent refs query', () =>
+        qByCollectionChunks<RefRow>(PARENT_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+    const pageRows = measure(metrics, 'group page refs query', () =>
+        qByCollectionChunks<RefRow>(PAGE_GROUP_REFS_QUERY, backlinkUids), {backlinks: backlinkUids.length})
+
+    metrics?.mark('base ref rows', {
+        directRows: directRows.length,
+        parentRows: parentRows.length,
+        pageRows: pageRows.length,
+    })
+
+    return [...directRows, ...parentRows, ...pageRows]
+}
 
 const addHierarchyGroups = (
     baseRefsByMemberUid: Map<string, Map<string, RefInfo>>,
     addGroupForMember: (memberUid: string, group: RefInfo) => void,
+    metrics?: ReferenceGroupMetrics,
 ) => {
     const ancestorNamesByMemberAndRef = new Map<string, Map<string, string[]>>()
     const allAncestorNames = new Set<string>()
@@ -264,11 +310,20 @@ const addHierarchyGroups = (
 
     if (!allAncestorNames.size) return
 
+    const pageRows = measure(metrics, 'hierarchy ancestor page query', () =>
+        qByCollectionChunks<[string, PulledRef]>(PAGES_BY_TITLE_QUERY, [...allAncestorNames]), {
+        ancestorNames: allAncestorNames.size,
+    })
     const pageByTitle = new Map(
-        qByCollectionChunks<[string, PulledRef]>(PAGES_BY_TITLE_QUERY, [...allAncestorNames])
+        pageRows
             .map(([title, page]) => [title, toRefInfo(page)] as const)
             .filter((entry): entry is readonly [string, RefInfo] => Boolean(entry[1])),
     )
+
+    metrics?.mark('hierarchy ancestor pages', {
+        ancestorNames: allAncestorNames.size,
+        foundPages: pageByTitle.size,
+    })
 
     for (const [memberUid, refsForMember] of ancestorNamesByMemberAndRef) {
         for (const ancestorNames of refsForMember.values()) {
@@ -311,6 +366,7 @@ const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefIn
 const addAttributeGroups = (
     baseRefsByMemberUid: Map<string, Map<string, RefInfo>>,
     addGroupForMember: (memberUid: string, group: RefInfo) => void,
+    metrics?: ReferenceGroupMetrics,
 ) => {
     const memberUidsByBaseRefUid = new Map<string, Set<string>>()
 
@@ -329,12 +385,22 @@ const addAttributeGroups = (
     if (!baseRefUids.length) return
 
     for (const attributeName of GROUPING_ATTRIBUTE_NAMES) {
-        const rows = qByCollectionChunks<AttributeRefRow>(
-            ATTRIBUTE_GROUP_REFS_QUERY,
-            baseRefUids,
-            `${attributeName}::`,
-        )
+        const rows = measure(metrics, 'attribute refs query', () =>
+            qByCollectionChunks<AttributeRefRow>(
+                ATTRIBUTE_GROUP_REFS_QUERY,
+                baseRefUids,
+                `${attributeName}::`,
+            ), {
+            attributeName,
+            baseRefs: baseRefUids.length,
+        })
         const refsByBaseUid = firstAttributeRefsByBaseUid(rows)
+
+        metrics?.mark('attribute refs result', {
+            attributeName,
+            rows: rows.length,
+            baseRefsWithAttribute: refsByBaseUid.size,
+        })
 
         for (const [baseUid, refs] of refsByBaseUid) {
             const memberUids = memberUidsByBaseRefUid.get(baseUid)
@@ -357,15 +423,17 @@ export const buildReferenceGroupsWithDatalog = ({
     highPriorityPages,
     lowPriorityPages,
     smallestGroupSize,
+    metrics,
 }: BuildReferenceGroupsOptions): RenderedReferenceGroup[] => {
     const referenceGroups: LightweightReferenceGroupMap = new Map()
     const groupTextByUid = new Map<string, string>([[rootUid, rootText]])
     const combinedExclusion = combineRegexes(dontGroupReferencesTo)
     const notExcluded = (group: RefInfo) => !combinedExclusion?.test(group.text)
 
-    const memberByUid = new Map<string, GroupedEntity>(
-        unique(backlinkUids).map(uid => [uid, {uid}]),
-    )
+    const memberByUid = measure(metrics, 'initialize member uid map', () =>
+        new Map<string, GroupedEntity>(unique(backlinkUids).map(uid => [uid, {uid}])), {
+        backlinkUids: backlinkUids.length,
+    })
     const baseRefsByMemberUid = new Map<string, Map<string, RefInfo>>()
     const memberUidsWithGroups = new Set<string>()
 
@@ -377,50 +445,82 @@ export const buildReferenceGroupsWithDatalog = ({
         addMemberToGroup(referenceGroups, groupTextByUid, group, member)
     }
 
-    for (const [memberUid, pulledRef] of queryBaseGroupRows([...memberByUid.keys()])) {
-        const ref = toRefInfo(pulledRef)
-        if (!ref) continue
-
-        if (notExcluded(ref)) {
-            let baseRefsByUid = baseRefsByMemberUid.get(memberUid)
-            if (!baseRefsByUid) {
-                baseRefsByUid = new Map()
-                baseRefsByMemberUid.set(memberUid, baseRefsByUid)
+    measure(metrics, 'build base reference groups', () => {
+        let skippedPulledRefs = 0
+        for (const [memberUid, pulledRef] of queryBaseGroupRows([...memberByUid.keys()], metrics)) {
+            const ref = toRefInfo(pulledRef)
+            if (!ref) {
+                skippedPulledRefs += 1
+                continue
             }
-            baseRefsByUid.set(ref.uid, ref)
+
+            if (notExcluded(ref)) {
+                let baseRefsByUid = baseRefsByMemberUid.get(memberUid)
+                if (!baseRefsByUid) {
+                    baseRefsByUid = new Map()
+                    baseRefsByMemberUid.set(memberUid, baseRefsByUid)
+                }
+                baseRefsByUid.set(ref.uid, ref)
+            }
+
+            addGroupForMember(memberUid, ref)
         }
 
-        addGroupForMember(memberUid, ref)
-    }
+        metrics?.mark('base reference groups built', {
+            groups: referenceGroups.size,
+            membersWithBaseRefs: baseRefsByMemberUid.size,
+            skippedPulledRefs,
+        })
+    })
 
-    addHierarchyGroups(baseRefsByMemberUid, addGroupForMember)
-    addAttributeGroups(baseRefsByMemberUid, addGroupForMember)
+    measure(metrics, 'add hierarchy groups', () =>
+        addHierarchyGroups(baseRefsByMemberUid, addGroupForMember, metrics), {
+        membersWithBaseRefs: baseRefsByMemberUid.size,
+    })
+    measure(metrics, 'add attribute groups', () =>
+        addAttributeGroups(baseRefsByMemberUid, addGroupForMember, metrics), {
+        uniqueBaseRefs: new Set([...baseRefsByMemberUid.values()].flatMap(refs => [...refs.keys()])).size,
+    })
 
-    for (const [memberUid, member] of memberByUid) {
-        if (!memberUidsWithGroups.has(memberUid)) {
-            addMemberToGroup(referenceGroups, groupTextByUid, {uid: rootUid, text: rootText, isPage: true}, member)
+    measure(metrics, 'assign fallback group', () => {
+        let fallbackMembers = 0
+        for (const [memberUid, member] of memberByUid) {
+            if (!memberUidsWithGroups.has(memberUid)) {
+                fallbackMembers += 1
+                addMemberToGroup(referenceGroups, groupTextByUid, {uid: rootUid, text: rootText, isPage: true}, member)
+            }
         }
-    }
+        metrics?.mark('fallback group assigned', {fallbackMembers})
+    })
 
-    const grouped = new CommonReferencesGrouper(
-        rootUid,
-        dontGroupReferencesTo,
-        {
-            low: lowPriorityPages,
-            high: highPriorityPages,
-        },
-    ).deduplicateAndSortGroups(referenceGroups as unknown as ReferenceGroupMap) as unknown as Map<string, GroupedEntity[]>
+    const grouped = measure(metrics, 'deduplicate and sort groups', () =>
+        new CommonReferencesGrouper(
+            rootUid,
+            dontGroupReferencesTo,
+            {
+                low: lowPriorityPages,
+                high: highPriorityPages,
+            },
+        ).deduplicateAndSortGroups(referenceGroups as unknown as ReferenceGroupMap) as unknown as Map<string, GroupedEntity[]>, {
+        candidateGroups: referenceGroups.size,
+    })
 
-    const mergedGroups = mergeGroupsSmallerThan(
-        grouped,
-        rootUid,
+    const mergedGroups = measure(metrics, 'merge small groups', () =>
+        mergeGroupsSmallerThan(
+            grouped,
+            rootUid,
+            smallestGroupSize,
+            uid => highPriorityPages.some(pattern => pattern.test(groupTextByUid.get(uid) ?? '')),
+        ), {
+        groupsBeforeMerge: grouped.size,
         smallestGroupSize,
-        uid => highPriorityPages.some(pattern => pattern.test(groupTextByUid.get(uid) ?? '')),
-    )
+    })
 
-    return [...mergedGroups.entries()].map(([uid, entities]) => ({
+    return measure(metrics, 'format render groups', () => [...mergedGroups.entries()].map(([uid, entities]) => ({
         uid,
         title: groupTextByUid.get(uid) ?? uid,
         entities,
-    }))
+    })), {
+        groups: mergedGroups.size,
+    })
 }
