@@ -135,7 +135,17 @@ describe('getFilteredBacklinkUids', () => {
         expect(result.backlinkUids).toEqual(['a'])
         expect([...result.backlinkPageByUid.keys()]).toEqual(['a'])
         expect(result.baseGroupRows).toEqual([['a', keepRef]])
-        expect(mockQ).toHaveBeenCalledTimes(2)
+
+        mockQ.mockReturnValueOnce([[3]])
+
+        expect(getFilteredBacklinkUids('root', {
+            includes: ['Keep'],
+            removes: ['Drop'],
+        })).toEqual(['a'])
+        expect(mockQ.mock.calls
+            .filter(([query]) => String(query).includes(':find ?blockUid ?pageUid ?pageTitle'))
+        ).toHaveLength(1)
+        expect(mockQ).toHaveBeenCalledTimes(3)
     })
 })
 
