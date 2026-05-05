@@ -100,12 +100,9 @@ describe('getFilteredBacklinkUids', () => {
     it('intersects include filters and subtracts remove filters using Datalog result sets', () => {
         mockQ
             .mockReturnValueOnce([['a'], ['b'], ['c']])
-            .mockReturnValueOnce([['a']])
-            .mockReturnValueOnce([['b']])
-            .mockReturnValueOnce([])
-            .mockReturnValueOnce([['b']])
-            .mockReturnValueOnce([])
-            .mockReturnValueOnce([])
+            .mockReturnValueOnce([['Keep', 'a']])
+            .mockReturnValueOnce([['Keep', 'b']])
+            .mockReturnValueOnce([['Drop', 'b']])
 
         const result = getFilteredBacklinkUids('root', {
             includes: ['Keep'],
@@ -113,7 +110,7 @@ describe('getFilteredBacklinkUids', () => {
         })
 
         expect(result).toEqual(['a'])
-        expect(mockQ).toHaveBeenCalledTimes(7)
+        expect(mockQ).toHaveBeenCalledTimes(4)
     })
 })
 
@@ -132,7 +129,7 @@ describe('buildReferenceGroupsWithDatalog', () => {
     })
 
     it('groups bulk Datalog rows with exclusions, attribute groups, fallback, and final merge', () => {
-        mockQ.mockImplementation((query: string, values: string[], prefix?: string) => {
+        mockQ.mockImplementation((query: string, values: string[], prefixes?: string[]) => {
             if (query.includes(':in $ [?blockUid ...]') && query.includes('[?block :block/refs ?ref]')) {
                 return [
                     ['a', null],
@@ -150,16 +147,13 @@ describe('buildReferenceGroupsWithDatalog', () => {
                 return []
             }
 
-            if (query.includes(':in $ [?baseUid ...]') && prefix === 'isa::') {
+            if (query.includes(':in $ [?baseUid ...]') && prefixes?.includes('isa::')) {
                 expect(values).toEqual(['topic'])
+                expect(prefixes).toEqual(['isa::', 'group with::'])
                 return [
-                    ['topic', 0, null],
-                    ['topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
+                    ['isa::', 'topic', 0, null],
+                    ['isa::', 'topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
                 ]
-            }
-
-            if (query.includes(':in $ [?baseUid ...]') && prefix === 'group with::') {
-                return []
             }
 
             throw new Error(`Unexpected query: ${query}`)

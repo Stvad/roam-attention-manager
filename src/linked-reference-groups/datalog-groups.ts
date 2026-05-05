@@ -26,7 +26,8 @@ type RefInfo = {
 }
 
 type RefRow = [string, PulledRef]
-type AttributeRefRow = [string, number, PulledRef]
+type FilterRefRow = [string, string]
+type AttributeRefRow = [string, string, number, PulledRef]
 
 export type GroupedEntity = Pick<RoamEntity, 'uid'>
 
@@ -90,8 +91,8 @@ const ROOT_BACKLINK_UIDS_QUERY = `
 `
 
 const DIRECT_FILTER_REF_QUERY = `
-[:find ?uid
- :in $ ?rootUid ?title
+[:find ?title ?uid
+ :in $ ?rootUid [?title ...]
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
@@ -101,8 +102,8 @@ const DIRECT_FILTER_REF_QUERY = `
 `
 
 const PARENT_FILTER_REF_QUERY = `
-[:find ?uid
- :in $ ?rootUid ?title
+[:find ?title ?uid
+ :in $ ?rootUid [?title ...]
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
@@ -113,8 +114,8 @@ const PARENT_FILTER_REF_QUERY = `
 `
 
 const PAGE_FILTER_REF_QUERY = `
-[:find ?uid
- :in $ ?rootUid ?title
+[:find ?title ?uid
+ :in $ ?rootUid [?title ...]
  :where
    [?root :block/uid ?rootUid]
    [?block :block/refs ?root]
@@ -149,8 +150,8 @@ const PAGE_GROUP_REFS_QUERY = `
 `
 
 const ATTRIBUTE_GROUP_REFS_QUERY = `
-[:find ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
- :in $ [?baseUid ...] ?prefix
+[:find ?prefix ?baseUid ?order (pull ?ref [:block/uid :node/title :block/string])
+ :in $ [?baseUid ...] [?prefix ...]
  :where
    [?base :block/uid ?baseUid]
    [?base :block/children ?attributeBlock]
@@ -167,22 +168,62 @@ const PAGES_BY_TITLE_QUERY = `
    [?page :node/title ?title]]
 `
 
-const visibleRefUidsForFilterTitle = (rootUid: string, title: string, metrics?: ReferenceGroupMetrics): Set<string> => {
-    const directRows = measure(metrics, 'filter direct refs query', () =>
-        q<[string]>(DIRECT_FILTER_REF_QUERY, rootUid, title), {title})
-    const parentRows = measure(metrics, 'filter parent refs query', () =>
-        q<[string]>(PARENT_FILTER_REF_QUERY, rootUid, title), {title})
-    const pageRows = measure(metrics, 'filter page refs query', () =>
-        q<[string]>(PAGE_FILTER_REF_QUERY, rootUid, title), {title})
-    const rows = [...directRows, ...parentRows, ...pageRows]
-    const result = new Set(rows.map(([uid]) => uid))
+const refRowsByTitle = (rows: FilterRefRow[]): Map<string, Set<string>> => {
+    const result = new Map<string, Set<string>>()
+    for (const [title, uid] of rows) {
+        let refsForTitle = result.get(title)
+        if (!refsForTitle) {
+            refsForTitle = new Set()
+            result.set(title, refsForTitle)
+        }
+        refsForTitle.add(uid)
+    }
+    return result
+}
 
-    metrics?.mark('filter title result', {
-        title,
+const mergeTitleRefRows = (...maps: Map<string, Set<string>>[]): Map<string, Set<string>> => {
+    const result = new Map<string, Set<string>>()
+
+    for (const map of maps) {
+        for (const [title, uids] of map) {
+            let refsForTitle = result.get(title)
+            if (!refsForTitle) {
+                refsForTitle = new Set()
+                result.set(title, refsForTitle)
+            }
+            uids.forEach(uid => refsForTitle!.add(uid))
+        }
+    }
+
+    return result
+}
+
+const visibleRefUidsByFilterTitle = (
+    rootUid: string,
+    titles: string[],
+    metrics?: ReferenceGroupMetrics,
+): Map<string, Set<string>> => {
+    if (!titles.length) return new Map()
+
+    const directRows = measure(metrics, 'filter direct refs query', () =>
+        q<FilterRefRow>(DIRECT_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
+    const parentRows = measure(metrics, 'filter parent refs query', () =>
+        q<FilterRefRow>(PARENT_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
+    const pageRows = measure(metrics, 'filter page refs query', () =>
+        q<FilterRefRow>(PAGE_FILTER_REF_QUERY, rootUid, titles), {titles: titles.length})
+    const result = mergeTitleRefRows(
+        refRowsByTitle(directRows),
+        refRowsByTitle(parentRows),
+        refRowsByTitle(pageRows),
+    )
+
+    metrics?.mark('filter title results', {
+        titles: titles.length,
         directRows: directRows.length,
         parentRows: parentRows.length,
         pageRows: pageRows.length,
-        matchedBlocks: result.size,
+        titlesWithMatches: result.size,
+        matchedBlocks: new Set([...result.values()].flatMap(uids => [...uids])).size,
     })
 
     return result
@@ -204,8 +245,10 @@ export const getFilteredBacklinkUids = (
 
     if (!filter.includes.length && !filter.removes.length) return allBacklinkUids
 
-    const includeMatches = filter.includes.map(title => visibleRefUidsForFilterTitle(rootUid, title, metrics))
-    const removeMatches = filter.removes.map(title => visibleRefUidsForFilterTitle(rootUid, title, metrics))
+    const filterTitles = unique([...filter.includes, ...filter.removes])
+    const matchesByTitle = visibleRefUidsByFilterTitle(rootUid, filterTitles, metrics)
+    const includeMatches = filter.includes.map(title => matchesByTitle.get(title) ?? new Set<string>())
+    const removeMatches = filter.removes.map(title => matchesByTitle.get(title) ?? new Set<string>())
 
     return measure(metrics, 'apply filter sets', () =>
         allBacklinkUids.filter(uid =>
@@ -338,7 +381,7 @@ const addHierarchyGroups = (
 const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefInfo[]> => {
     const firstOrderByBaseUid = new Map<string, number>()
 
-    for (const [baseUid, order] of rows) {
+    for (const [, baseUid, order] of rows) {
         const existingOrder = firstOrderByBaseUid.get(baseUid)
         if (existingOrder === undefined || order < existingOrder) {
             firstOrderByBaseUid.set(baseUid, order)
@@ -346,7 +389,7 @@ const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefIn
     }
 
     const result = new Map<string, Map<string, RefInfo>>()
-    for (const [baseUid, order, pulledRef] of rows) {
+    for (const [, baseUid, order, pulledRef] of rows) {
         if (order !== firstOrderByBaseUid.get(baseUid)) continue
 
         const ref = toRefInfo(pulledRef)
@@ -361,6 +404,19 @@ const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefIn
     }
 
     return new Map([...result].map(([baseUid, refsByUid]) => [baseUid, [...refsByUid.values()]]))
+}
+
+const attributeRowsByName = (rows: AttributeRefRow[]): Map<string, AttributeRefRow[]> => {
+    const result = new Map<string, AttributeRefRow[]>()
+
+    for (const row of rows) {
+        const attributeName = row[0].slice(0, -2)
+        const rowsForAttribute = result.get(attributeName) ?? []
+        rowsForAttribute.push(row)
+        result.set(attributeName, rowsForAttribute)
+    }
+
+    return result
 }
 
 const addAttributeGroups = (
@@ -384,16 +440,20 @@ const addAttributeGroups = (
     const baseRefUids = [...memberUidsByBaseRefUid.keys()]
     if (!baseRefUids.length) return
 
-    for (const attributeName of GROUPING_ATTRIBUTE_NAMES) {
-        const rows = measure(metrics, 'attribute refs query', () =>
+    const rowsByAttribute = attributeRowsByName(
+        measure(metrics, 'attribute refs query', () =>
             qByCollectionChunks<AttributeRefRow>(
                 ATTRIBUTE_GROUP_REFS_QUERY,
                 baseRefUids,
-                `${attributeName}::`,
+                GROUPING_ATTRIBUTE_NAMES.map(attributeName => `${attributeName}::`),
             ), {
-            attributeName,
+            attributes: GROUPING_ATTRIBUTE_NAMES.length,
             baseRefs: baseRefUids.length,
-        })
+        }),
+    )
+
+    for (const attributeName of GROUPING_ATTRIBUTE_NAMES) {
+        const rows = rowsByAttribute.get(attributeName) ?? []
         const refsByBaseUid = firstAttributeRefsByBaseUid(rows)
 
         metrics?.mark('attribute refs result', {
