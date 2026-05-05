@@ -14,9 +14,15 @@ type PulledRef = {
     uid?: string
     title?: string
     string?: string
+    order?: number
+    refs?: PulledRef[]
+    children?: PulledRef[]
     ':block/uid'?: string
     ':node/title'?: string
     ':block/string'?: string
+    ':block/order'?: number
+    ':block/refs'?: PulledRef[]
+    ':block/children'?: PulledRef[]
 } | null | undefined
 
 type RefInfo = {
@@ -29,6 +35,7 @@ type RefRow = [string, PulledRef]
 type FilterRefRow = [string, string]
 type RootBacklinkRow = [string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
+type AttributeBaseRow = [string, PulledRef]
 type FilteredBacklinkData = {
     backlinkUids: string[]
     backlinkPageByUid: Map<string, RefInfo>
@@ -80,6 +87,12 @@ const pulledUid = (ref: PulledRef): string => ref?.[':block/uid'] ?? ref?.uid ??
 const pulledTitle = (ref: PulledRef): string | undefined => ref?.[':node/title'] ?? ref?.title
 
 const pulledText = (ref: PulledRef): string => pulledTitle(ref) ?? ref?.[':block/string'] ?? ref?.string ?? ''
+
+const pulledOrder = (ref: PulledRef): number => ref?.[':block/order'] ?? ref?.order ?? Number.POSITIVE_INFINITY
+
+const pulledRefs = (ref: PulledRef): PulledRef[] => ref?.[':block/refs'] ?? ref?.refs ?? []
+
+const pulledChildren = (ref: PulledRef): PulledRef[] => ref?.[':block/children'] ?? ref?.children ?? []
 
 const toRefInfo = (ref: PulledRef): RefInfo | null => {
     const uid = pulledUid(ref)
@@ -180,6 +193,15 @@ const ATTRIBUTE_GROUP_REFS_QUERY = `
    [?attributeBlock :block/string ?attributeString]
    [(clojure.string/starts-with? ?attributeString ?prefix)]
    [?attributeBlock :block/refs ?ref]]
+`
+
+const ATTRIBUTE_BASE_PULL_QUERY = `
+[:find ?baseUid (pull ?base [:block/uid :node/title :block/string
+                             {:block/children [:block/uid :block/string :block/order
+                                               {:block/refs [:block/uid :node/title :block/string]}]}])
+ :in $ [?baseUid ...]
+ :where
+   [?base :block/uid ?baseUid]]
 `
 
 const PAGES_BY_TITLE_QUERY = `
@@ -600,10 +622,28 @@ const firstAttributeRefsByBaseUid = (rows: AttributeRefRow[]): Map<string, RefIn
     return new Map([...result].map(([baseUid, refsByUid]) => [baseUid, [...refsByUid.values()]]))
 }
 
-const queryAttributeRows = (
+const attributeRowsFromPulledBaseRefs = (rows: AttributeBaseRow[]): AttributeRefRow[] => {
+    const prefixes = GROUPING_ATTRIBUTE_NAMES.map(attributeName => `${attributeName}::`)
+    const result: AttributeRefRow[] = []
+
+    for (const [baseUid, pulledBase] of rows) {
+        for (const child of pulledChildren(pulledBase)) {
+            const childText = pulledText(child)
+            const prefix = prefixes.find(candidate => childText.startsWith(candidate))
+            if (!prefix) continue
+
+            const order = pulledOrder(child)
+            pulledRefs(child).forEach(ref => result.push([prefix, baseUid, order, ref]))
+        }
+    }
+
+    return result
+}
+
+const queryAttributeRowsByPrefix = (
     baseRefUids: string[],
     metrics?: ReferenceGroupMetrics,
-): AttributeRefRow[] => measure(metrics, 'attribute refs query', () =>
+): AttributeRefRow[] => measure(metrics, 'attribute refs query fallback', () =>
     qByCollectionChunks<AttributeRefRow>(
         ATTRIBUTE_GROUP_REFS_QUERY,
         baseRefUids,
@@ -613,6 +653,34 @@ const queryAttributeRows = (
     baseRefs: baseRefUids.length,
     attributeLookup: 'prefix',
 })
+
+const queryAttributeRows = (
+    baseRefUids: string[],
+    metrics?: ReferenceGroupMetrics,
+): AttributeRefRow[] => {
+    try {
+        const baseRows = measure(metrics, 'attribute base refs pull query', () =>
+            qByCollectionChunks<AttributeBaseRow>(ATTRIBUTE_BASE_PULL_QUERY, baseRefUids), {
+            baseRefs: baseRefUids.length,
+            attributeLookup: 'base pull',
+        })
+        const rows = measure(metrics, 'attribute rows from pulled refs', () =>
+            attributeRowsFromPulledBaseRefs(baseRows), {
+            baseRefs: baseRows.length,
+            attributes: GROUPING_ATTRIBUTE_NAMES.length,
+        })
+        metrics?.mark('attribute pulled refs result', {
+            baseRefs: baseRows.length,
+            rows: rows.length,
+        })
+        return rows
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        metrics?.mark('attribute base refs pull failed', {message})
+        console.warn('[roam-date reference groups] attribute base pull failed; falling back to prefix query', error)
+        return queryAttributeRowsByPrefix(baseRefUids, metrics)
+    }
+}
 
 const attributeRowsByName = (rows: AttributeRefRow[]): Map<string, AttributeRefRow[]> => {
     const result = new Map<string, AttributeRefRow[]>()

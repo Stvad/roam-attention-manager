@@ -176,12 +176,27 @@ describe('buildReferenceGroupsWithDatalog', () => {
                 throw new Error('Expected page refs to come from the cached backlink pages')
             }
 
-            if (query.includes(':in $ [?baseUid ...]') && prefixes?.includes('isa::')) {
+            if (query.includes(':in $ [?baseUid ...]') && query.includes('(pull ?base')) {
                 expect(values).toEqual(['topic', 'page-a', 'page-b', 'page-c'])
-                expect(prefixes).toEqual(['isa::', 'group with::'])
                 return [
-                    ['isa::', 'topic', 0, null],
-                    ['isa::', 'topic', 0, {':block/uid': 'project', ':node/title': 'Project'}],
+                    ['topic', {
+                        ':block/uid': 'topic',
+                        ':node/title': 'Topic',
+                        ':block/children': [
+                            {
+                                ':block/uid': 'attr',
+                                ':block/order': 0,
+                                ':block/string': 'isa::[[Project]]',
+                                ':block/refs': [
+                                    null,
+                                    {':block/uid': 'project', ':node/title': 'Project'},
+                                ],
+                            },
+                        ],
+                    }],
+                    ['page-a', {':block/uid': 'page-a', ':node/title': 'Page A'}],
+                    ['page-b', {':block/uid': 'page-b', ':node/title': 'Page B'}],
+                    ['page-c', {':block/uid': 'page-c', ':node/title': 'Page C'}],
                 ]
             }
 
