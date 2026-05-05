@@ -9,8 +9,6 @@ import type {ReferenceGroupMetrics} from './metrics'
 
 const GROUPING_ATTRIBUTE_NAMES = ['isa', 'group with']
 const QUERY_CHUNK_SIZE = 500
-const ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS = 60 * 1000
-const ROOT_BACKLINK_BASE_REFS_CACHE_MAX_ENTRIES = 100
 const ATTRIBUTE_CACHE_TTL_MS = 5 * 60 * 1000
 const ATTRIBUTE_CACHE_MAX_ENTRIES = 2000
 
@@ -44,11 +42,6 @@ type AttributeRefRow = [string, string, number, PulledRef]
 type AttributeBaseRow = [string, PulledRef]
 type AttributeCacheEntry = {
     rows: AttributeRefRow[]
-    expiresAt: number
-}
-type RootBacklinkBaseRefsCacheEntry = {
-    data: FilteredBacklinkData
-    backlinkCount: number
     expiresAt: number
 }
 type FilteredBacklinkData = {
@@ -99,92 +92,7 @@ const measure = <T,>(metrics: ReferenceGroupMetrics | undefined, stage: string, 
 
 const now = () => Date.now()
 
-const rootBacklinkBaseRefsCache = new Map<string, RootBacklinkBaseRefsCacheEntry>()
 const attributeRowsByBaseUidCache = new Map<string, AttributeCacheEntry>()
-
-const pruneRootBacklinkBaseRefsCache = (timestamp = now()) => {
-    for (const [rootUid, entry] of rootBacklinkBaseRefsCache) {
-        if (entry.expiresAt <= timestamp) {
-            rootBacklinkBaseRefsCache.delete(rootUid)
-        }
-    }
-
-    while (rootBacklinkBaseRefsCache.size > ROOT_BACKLINK_BASE_REFS_CACHE_MAX_ENTRIES) {
-        const oldestRootUid = rootBacklinkBaseRefsCache.keys().next().value
-        if (!oldestRootUid) return
-
-        rootBacklinkBaseRefsCache.delete(oldestRootUid)
-    }
-}
-
-const cachedRootBacklinkBaseRefs = (
-    rootUid: string,
-    expectedBacklinks: number,
-    metrics?: ReferenceGroupMetrics,
-    timestamp = now(),
-): FilteredBacklinkData | null => {
-    const entry = rootBacklinkBaseRefsCache.get(rootUid)
-    if (!entry) {
-        metrics?.mark('root backlink base refs cache', {
-            rootUid,
-            hit: false,
-            reason: 'miss',
-            cacheSize: rootBacklinkBaseRefsCache.size,
-            ttlMs: ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-        })
-        return null
-    }
-
-    if (entry.expiresAt <= timestamp) {
-        rootBacklinkBaseRefsCache.delete(rootUid)
-        metrics?.mark('root backlink base refs cache', {
-            rootUid,
-            hit: false,
-            reason: 'expired',
-            cacheSize: rootBacklinkBaseRefsCache.size,
-            ttlMs: ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-        })
-        return null
-    }
-
-    if (entry.backlinkCount !== expectedBacklinks) {
-        rootBacklinkBaseRefsCache.delete(rootUid)
-        metrics?.mark('root backlink base refs cache', {
-            rootUid,
-            hit: false,
-            reason: 'backlink-count-mismatch',
-            cachedBacklinks: entry.backlinkCount,
-            expectedBacklinks,
-            cacheSize: rootBacklinkBaseRefsCache.size,
-            ttlMs: ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-        })
-        return null
-    }
-
-    metrics?.mark('root backlink base refs cache', {
-        rootUid,
-        hit: true,
-        backlinks: entry.data.backlinkUids.length,
-        baseRows: entry.data.baseGroupRows?.length ?? 0,
-        cacheSize: rootBacklinkBaseRefsCache.size,
-        ttlMs: ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-    })
-    return entry.data
-}
-
-const cacheRootBacklinkBaseRefs = (
-    rootUid: string,
-    expectedBacklinks: number,
-    data: FilteredBacklinkData,
-    timestamp = now(),
-) => {
-    rootBacklinkBaseRefsCache.set(rootUid, {
-        data,
-        backlinkCount: expectedBacklinks,
-        expiresAt: timestamp + ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-    })
-    pruneRootBacklinkBaseRefsCache(timestamp)
-}
 
 const pruneAttributeCache = (timestamp = now()) => {
     for (const [baseUid, entry] of attributeRowsByBaseUidCache) {
@@ -578,80 +486,23 @@ const queryRootBacklinkCount = (
 ): number => measure(metrics, 'root backlink count query', () =>
     q<CountRow>(ROOT_BACKLINK_COUNT_QUERY, rootUid)[0]?.[0] ?? 0, {rootUid})
 
-const markRootBacklinkBaseRefsResult = (
-    backlinks: FilteredBacklinkData,
-    expectedBacklinks: number,
-    source: string,
-    metrics?: ReferenceGroupMetrics,
-) => {
-    metrics?.mark('root backlink base refs result', {
-        backlinks: backlinks.backlinkUids.length,
-        expectedBacklinks,
-        pages: backlinks.backlinkPageByUid.size,
-        baseRows: backlinks.baseGroupRows?.length ?? 0,
-        source,
-    })
-
-    metrics?.mark('base ref rows', {
-        groupRows: backlinks.baseGroupRows?.length ?? 0,
-        pageRows: 0,
-        groupRowsSource: source,
-        pageRowsSource: source,
-    })
-}
-
-const queryCachedRootBacklinksWithBaseRefs = (
-    rootUid: string,
-    metrics?: ReferenceGroupMetrics,
-): FilteredBacklinkData | null => {
-    const entry = rootBacklinkBaseRefsCache.get(rootUid)
-    if (!entry) return null
-
-    const timestamp = now()
-    if (entry.expiresAt <= timestamp) {
-        rootBacklinkBaseRefsCache.delete(rootUid)
-        metrics?.mark('root backlink base refs cache', {
-            rootUid,
-            hit: false,
-            reason: 'expired',
-            cacheSize: rootBacklinkBaseRefsCache.size,
-            ttlMs: ROOT_BACKLINK_BASE_REFS_CACHE_TTL_MS,
-        })
-        return null
-    }
-
-    const expectedBacklinks = queryRootBacklinkCount(rootUid, metrics)
-    const cachedBacklinks = cachedRootBacklinkBaseRefs(rootUid, expectedBacklinks, metrics, timestamp)
-    if (!cachedBacklinks) return null
-
-    markRootBacklinkBaseRefsResult(cachedBacklinks, expectedBacklinks, 'root backlink base refs cache', metrics)
-    return cachedBacklinks
-}
-
 const queryRootBacklinksWithBaseRefs = (
     rootUid: string,
     expectedBacklinks: number,
     metrics?: ReferenceGroupMetrics,
 ): FilteredBacklinkData | null => {
-    const timestamp = now()
-    const cachedBacklinks = cachedRootBacklinkBaseRefs(rootUid, expectedBacklinks, metrics, timestamp)
-    if (cachedBacklinks) {
-        markRootBacklinkBaseRefsResult(cachedBacklinks, expectedBacklinks, 'root backlink base refs cache', metrics)
-        return cachedBacklinks
-    }
-
     const rows = measure(metrics, 'root backlink base refs query', () =>
         q<RootBacklinkBaseRefRow>(ROOT_BACKLINK_BASE_REFS_QUERY, rootUid), {rootUid})
     const backlinks = buildBacklinksFromBaseRows(rows)
 
+    metrics?.mark('root backlink base refs result', {
+        backlinks: backlinks.backlinkUids.length,
+        expectedBacklinks,
+        pages: backlinks.backlinkPageByUid.size,
+        baseRows: backlinks.baseGroupRows?.length ?? 0,
+    })
+
     if (backlinks.backlinkUids.length !== expectedBacklinks) {
-        metrics?.mark('root backlink base refs result', {
-            backlinks: backlinks.backlinkUids.length,
-            expectedBacklinks,
-            pages: backlinks.backlinkPageByUid.size,
-            baseRows: backlinks.baseGroupRows?.length ?? 0,
-            source: 'root backlink base refs query',
-        })
         metrics?.mark('root backlink base refs mismatch', {
             backlinks: backlinks.backlinkUids.length,
             expectedBacklinks,
@@ -659,8 +510,12 @@ const queryRootBacklinksWithBaseRefs = (
         return null
     }
 
-    markRootBacklinkBaseRefsResult(backlinks, expectedBacklinks, 'root backlink base refs query', metrics)
-    cacheRootBacklinkBaseRefs(rootUid, expectedBacklinks, backlinks, timestamp)
+    metrics?.mark('base ref rows', {
+        groupRows: backlinks.baseGroupRows?.length ?? 0,
+        pageRows: 0,
+        groupRowsSource: 'root backlink base refs query',
+        pageRowsSource: 'root backlink base refs query',
+    })
 
     return backlinks
 }
@@ -725,12 +580,7 @@ export const getFilteredBacklinks = (
     rootUid: string,
     filter: ReferenceFilter,
     metrics?: ReferenceGroupMetrics,
-): FilteredBacklinkData => filterBacklinks(
-    rootUid,
-    queryCachedRootBacklinksWithBaseRefs(rootUid, metrics) ?? queryRootBacklinks(rootUid, metrics),
-    filter,
-    metrics,
-)
+): FilteredBacklinkData => filterBacklinks(rootUid, queryRootBacklinks(rootUid, metrics), filter, metrics)
 
 export const getFilteredBacklinksWithBaseRefs = (
     rootUid: string,
