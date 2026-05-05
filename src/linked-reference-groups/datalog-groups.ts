@@ -9,6 +9,8 @@ import type {ReferenceGroupMetrics} from './metrics'
 
 const GROUPING_ATTRIBUTE_NAMES = ['isa', 'group with']
 const QUERY_CHUNK_SIZE = 500
+const ATTRIBUTE_CACHE_TTL_MS = 5 * 60 * 1000
+const ATTRIBUTE_CACHE_MAX_ENTRIES = 2000
 
 type PulledRef = {
     uid?: string
@@ -38,6 +40,10 @@ type RootBacklinkRow = [string, PulledRef]
 type RootBacklinkBaseRefRow = [string, string, string, PulledRef]
 type AttributeRefRow = [string, string, number, PulledRef]
 type AttributeBaseRow = [string, PulledRef]
+type AttributeCacheEntry = {
+    rows: AttributeRefRow[]
+    expiresAt: number
+}
 type FilteredBacklinkData = {
     backlinkUids: string[]
     backlinkPageByUid: Map<string, RefInfo>
@@ -83,6 +89,74 @@ const qByCollectionChunks = <T extends unknown[]>(query: string, values: string[
 
 const measure = <T,>(metrics: ReferenceGroupMetrics | undefined, stage: string, fn: () => T, details?: Record<string, unknown>): T =>
     metrics ? metrics.measure(stage, fn, details) : fn()
+
+const now = () => Date.now()
+
+const attributeRowsByBaseUidCache = new Map<string, AttributeCacheEntry>()
+
+const pruneAttributeCache = (timestamp = now()) => {
+    for (const [baseUid, entry] of attributeRowsByBaseUidCache) {
+        if (entry.expiresAt <= timestamp) {
+            attributeRowsByBaseUidCache.delete(baseUid)
+        }
+    }
+
+    while (attributeRowsByBaseUidCache.size > ATTRIBUTE_CACHE_MAX_ENTRIES) {
+        const oldestBaseUid = attributeRowsByBaseUidCache.keys().next().value
+        if (!oldestBaseUid) return
+
+        attributeRowsByBaseUidCache.delete(oldestBaseUid)
+    }
+}
+
+const cachedAttributeRowsFor = (baseRefUids: string[], timestamp = now()) => {
+    const rows: AttributeRefRow[] = []
+    const misses: string[] = []
+    let expired = 0
+
+    for (const baseRefUid of baseRefUids) {
+        const entry = attributeRowsByBaseUidCache.get(baseRefUid)
+        if (!entry) {
+            misses.push(baseRefUid)
+            continue
+        }
+
+        if (entry.expiresAt <= timestamp) {
+            attributeRowsByBaseUidCache.delete(baseRefUid)
+            expired += 1
+            misses.push(baseRefUid)
+            continue
+        }
+
+        rows.push(...entry.rows)
+    }
+
+    return {
+        rows,
+        misses,
+        expired,
+        hits: baseRefUids.length - misses.length,
+    }
+}
+
+const cacheAttributeRows = (baseRefUids: string[], rows: AttributeRefRow[], timestamp = now()) => {
+    const rowsByBaseUid = new Map<string, AttributeRefRow[]>()
+    for (const row of rows) {
+        const baseUid = row[1]
+        const rowsForBase = rowsByBaseUid.get(baseUid) ?? []
+        rowsForBase.push(row)
+        rowsByBaseUid.set(baseUid, rowsForBase)
+    }
+
+    const expiresAt = timestamp + ATTRIBUTE_CACHE_TTL_MS
+    baseRefUids.forEach(baseRefUid =>
+        attributeRowsByBaseUidCache.set(baseRefUid, {
+            rows: rowsByBaseUid.get(baseRefUid) ?? [],
+            expiresAt,
+        }))
+
+    pruneAttributeCache(timestamp)
+}
 
 const pulledUid = (ref: PulledRef): string => ref?.[':block/uid'] ?? ref?.uid ?? ''
 
@@ -792,10 +866,26 @@ const queryAttributeRows = (
     baseRefUids: string[],
     metrics?: ReferenceGroupMetrics,
 ): AttributeRefRow[] => {
+    const timestamp = now()
+    const cached = cachedAttributeRowsFor(baseRefUids, timestamp)
+
+    metrics?.mark('attribute cache', {
+        baseRefs: baseRefUids.length,
+        hits: cached.hits,
+        misses: cached.misses.length,
+        expired: cached.expired,
+        cacheSize: attributeRowsByBaseUidCache.size,
+        ttlMs: ATTRIBUTE_CACHE_TTL_MS,
+    })
+
+    if (!cached.misses.length) {
+        return cached.rows
+    }
+
     try {
         const baseRows = measure(metrics, 'attribute base refs pull query', () =>
-            qByCollectionChunks<AttributeBaseRow>(ATTRIBUTE_BASE_PULL_QUERY, baseRefUids), {
-            baseRefs: baseRefUids.length,
+            qByCollectionChunks<AttributeBaseRow>(ATTRIBUTE_BASE_PULL_QUERY, cached.misses), {
+            baseRefs: cached.misses.length,
             attributeLookup: 'base pull',
         })
         const rows = measure(metrics, 'attribute rows from pulled refs', () =>
@@ -807,12 +897,15 @@ const queryAttributeRows = (
             baseRefs: baseRows.length,
             rows: rows.length,
         })
-        return rows
+        cacheAttributeRows(cached.misses, rows, timestamp)
+        return [...cached.rows, ...rows]
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         metrics?.mark('attribute base refs pull failed', {message})
         console.warn('[roam-date reference groups] attribute base pull failed; falling back to prefix query', error)
-        return queryAttributeRowsByPrefix(baseRefUids, metrics)
+        const rows = queryAttributeRowsByPrefix(cached.misses, metrics)
+        cacheAttributeRows(cached.misses, rows, timestamp)
+        return [...cached.rows, ...rows]
     }
 }
 

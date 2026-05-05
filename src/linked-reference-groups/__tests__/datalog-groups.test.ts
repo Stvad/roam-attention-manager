@@ -226,5 +226,29 @@ describe('buildReferenceGroupsWithDatalog', () => {
                 entities: [{uid: 'c'}],
             },
         ])
+
+        const cachedResult = buildReferenceGroupsWithDatalog({
+            rootUid: 'root',
+            rootText: 'Root',
+            backlinkUids: ['a', 'b', 'c'],
+            backlinkPageByUid: new Map([
+                ['a', {uid: 'page-a', text: 'Page A', isPage: true}],
+                ['b', {uid: 'page-b', text: 'Page B', isPage: true}],
+                ['c', {uid: 'page-c', text: 'Page C', isPage: true}],
+            ]),
+            dontGroupReferencesTo: [/^TODO$/],
+            highPriorityPages: [/^Project$/],
+            lowPriorityPages: [],
+            smallestGroupSize: 2,
+        })
+
+        expect(cachedResult).toEqual(result)
+        const attributePullCalls = mockQ.mock.calls
+            .filter(([query]) =>
+                String(query).includes(':in $ [?baseUid ...]') &&
+                String(query).includes('pull ?base')
+            )
+
+        expect(attributePullCalls).toHaveLength(1)
     })
 })
