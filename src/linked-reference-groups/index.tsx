@@ -5,6 +5,7 @@ import {OnloadArgs} from 'roamjs-components/types'
 import 'arrive'
 
 const containerClass = 'rm-reference-group-container'
+const legacyContainerClass = `${containerClass},`
 
 export const setup = async (extensionAPI: OnloadArgs['extensionAPI']) => {
     const searchReferencesSelector = '.roam-article .rm-reference-main .rm-reference-container .flex-h-box .rm-mentions-search'
@@ -13,17 +14,35 @@ export const setup = async (extensionAPI: OnloadArgs['extensionAPI']) => {
         searchReferencesSelector,
         {existing: true},
         async referenceSearch => {
+            const referenceSearchParent = referenceSearch.parentElement
+            const containerParent = referenceSearchParent?.parentElement
+            if (!referenceSearchParent || !containerParent) return
+
+            const existingContainer = [...containerParent.children]
+                .find(child =>
+                    child.classList.contains(containerClass) ||
+                    child.classList.contains(legacyContainerClass)) as HTMLElement | undefined
+            if (existingContainer) {
+                existingContainer.className = `${containerClass} rm-mentions`
+                void renderGroupsForCurrentPage(existingContainer, extensionAPI)
+                return
+            }
+
             const container = document.createElement('div')
-            container.className = containerClass + ', rm-mentions'
-            referenceSearch.parentElement?.after(container)
+            container.className = `${containerClass} rm-mentions`
+            referenceSearchParent.after(container)
 
             void renderGroupsForCurrentPage(container, extensionAPI)
         })
 }
 
 export const teardown = () => {
-    const container = document.querySelector(`.${containerClass}`)
-    container?.parentNode?.removeChild(container)
+    document
+        .querySelectorAll(`.${containerClass}, [class~="${legacyContainerClass}"]`)
+        .forEach(container => {
+            ReactDOM.unmountComponentAtNode(container)
+            container.parentNode?.removeChild(container)
+        })
 }
 const renderGroupsForCurrentPage = async (container: HTMLElement, extensionAPI: OnloadArgs['extensionAPI']) => {
     const entityUid = await window.roamAlphaAPI.ui.mainWindow.getOpenPageOrBlockUid()

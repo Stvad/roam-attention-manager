@@ -43,6 +43,9 @@ type RenderGroupsState = {
     runId?: string
 }
 
+const shortcutHandlersByEntityUid = new Map<string, () => void>()
+let shortcutListenerInstalled = false
+
 const renderedReferenceGroupsEqual = (
     left: RenderedReferenceGroup[],
     right: RenderedReferenceGroup[],
@@ -57,6 +60,45 @@ const renderedReferenceGroupsEqual = (
             leftGroup.entities.every((entity, entityIndex) =>
                 entity.uid === rightGroup.entities[entityIndex]?.uid)
     })
+
+const isReferenceGroupsRefreshShortcut = (event: KeyboardEvent) =>
+    !event.repeat &&
+    event.altKey &&
+    event.ctrlKey &&
+    (event.key === 'r' || event.key === 'R' || event.keyCode === 82)
+
+const referenceGroupsShortcutHandler = (event: KeyboardEvent) => {
+    if (!isReferenceGroupsRefreshShortcut(event)) return
+
+    event.preventDefault()
+    void window.roamAlphaAPI.ui.mainWindow.getOpenPageOrBlockUid()
+        .then(entityUid => {
+            if (!entityUid) return
+
+            shortcutHandlersByEntityUid.get(entityUid)?.()
+        })
+        .catch(error => console.warn('[roam-date reference groups] failed to resolve shortcut target', error))
+}
+
+const registerReferenceGroupsShortcut = (entityUid: string, handler: () => void) => {
+    shortcutHandlersByEntityUid.set(entityUid, handler)
+
+    if (!shortcutListenerInstalled) {
+        document.addEventListener('keydown', referenceGroupsShortcutHandler)
+        shortcutListenerInstalled = true
+    }
+
+    return () => {
+        if (shortcutHandlersByEntityUid.get(entityUid) === handler) {
+            shortcutHandlersByEntityUid.delete(entityUid)
+        }
+
+        if (shortcutHandlersByEntityUid.size === 0 && shortcutListenerInstalled) {
+            document.removeEventListener('keydown', referenceGroupsShortcutHandler)
+            shortcutListenerInstalled = false
+        }
+    }
+}
 
 export const useTogglButton = () => {
     const [isOpen, setIsOpen] = useState(true)
@@ -350,19 +392,16 @@ export function ReferenceGroups(
         setRenderState({groups, runId: metrics.id})
     }
 
-    const updateReferenceGroupsShortcutHandler = (event: KeyboardEvent) => {
-        if (event.altKey && event.ctrlKey && event.keyCode === 82) {
-            updateRenderGroups(true)
-            event.preventDefault()
-        }
-    }
-
     useEffect(() => {
         mountedRef.current = true
         return () => {
             mountedRef.current = false
         }
     }, [])
+
+    useEffect(() => {
+        return registerReferenceGroupsShortcut(entityUid, () => updateRenderGroups(true))
+    }, [entityUid, smallestGroupSize])
 
     useEffect(() => {
         let cancelled = false
@@ -372,13 +411,11 @@ export function ReferenceGroups(
             if (cancelled) return
 
             updateRenderGroups()
-            document.addEventListener('keydown', updateReferenceGroupsShortcutHandler)
         }
         runInitialUpdate()
 
         return () => {
             cancelled = true
-            document.removeEventListener('keydown', updateReferenceGroupsShortcutHandler)
         }
     }, [entityUid, smallestGroupSize])
 
